@@ -46,7 +46,7 @@ DM          Founder: "how's pipeline?"  → Head of Sales answers from live grap
 ## 4. The org chart (Paperclip pattern, our own code)
 | Agent | Reports to | Job | graph8 used | Extra |
 |---|---|---|---|---|
-| **Head of Sales** | Founder | Reads context, sets goals, assigns tasks, rolls up reports, asks approvals, answers founder | Global Context docs, ICPs/Personas (free), `/usage`, deals, sequence analytics | Claude API |
+| **Head of Sales** | Founder | Reads context, sets goals, assigns tasks, rolls up reports, asks approvals, answers founder | Global Context docs, ICPs/Personas (free), `/usage`, deals, sequence analytics | Gemini API |
 | **Scout** | Head | Find accounts + people matching ICP, rank by signals | `find_companies/contacts` (free), intent/signals, visitors | TinyFish signal checks (careers pages, news) |
 | **Researcher** | Head | Enrich, write "why this person, why now" | enrichment (credits), company intelligence | TinyFish free Search/Fetch on prospect site/news |
 | **SDR** | Head | Build + launch multi-channel sequence (FLOW.md stage 4) | lists, `POST /sequences` (EMAIL + LINKEDIN + PHONE steps, `finish_on_reply`), `sequencer/content/*/generate` or Claude | respects TEST allowlist |
@@ -87,16 +87,16 @@ Slack (Socket Mode, no public URL)          graph8 (be.graph8.com)
         ▼                                         │
 ┌──────────────── agents server (Node/TS) ───────────────────┐
 │ Slack Bolt │ Orchestrator (heartbeat, tasks) │ Agent brains  │
-│            │ Store (SQLite)                  │ (Claude API + │
+│            │ Store (Supabase Postgres)       │ (Gemini API + │
 │ Webhook route /webhooks/graph8 ◄── tunnel ── graph8 events  │
-│ /api/state + SSE  ──────────────► Agent Office (Next.js)    │
+│ writes to Supabase ── Realtime ──► Agent Office (Next.js)   │
 │ TinyFish client (search/fetch/monitors)                     │
 └─────────────────────────────────────────────────────────────┘
 ```
-- **LLM:** Claude API (`claude-sonnet-5`) with tool use; tools = thin wrappers over graph8 SDK calls. (graph8's own AI costs ~20 credits/run → use sparingly.)
-- **Store:** SQLite (`agents`, `tasks`, `reports`, `approvals`, `leads`, `events`).
+- **LLM:** **Gemini API** (team has keys; cheaper than Claude) with function calling; tools = thin wrappers over graph8 SDK calls. Model: **Gemini 3.8 Flash** for all agents (team decision); **paid tier 1** key. Verify the exact model ID string via the key's `models.list` before coding. LLM behind one small interface (`llm.ts`) so the provider can be swapped. (graph8's own AI costs ~20 credits/run → avoid.)
+- **Store:** **Supabase** (Postgres + Realtime + Auth). Tables: `workspaces`, `agents`, `tasks`, `reports`, `approvals`, `leads`, `events` — **every table has `workspace_id`** (1 workspace = 1 client).
 - **Safety:** `TEST_ALLOWLIST` (team emails/phones/LinkedIns) enforced in code — any enroll/send/call to anyone else is refused. Real graph8 data is searched, never contacted.
-- **Secrets:** `.env.local` (gitignored): `G8_API_KEY`, `G8_WEBHOOK_SECRET`, `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`, `SLACK_SIGNING_SECRET`, `ANTHROPIC_API_KEY`, `TINYFISH_API_KEY`, `TEST_ALLOWLIST`.
+- **Secrets:** server `.env.local` (gitignored): `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `GEMINI_API_KEY`, `SLACK_APP_TOKEN`, `SLACK_SIGNING_SECRET`, `TINYFISH_API_KEY`, `TEST_ALLOWLIST`, `DEMO_TIME_SCALE`. **Per-client** keys (graph8 API key, Slack bot token, webhook secret) live in the `workspaces` row, not in env.
 
 ### Folder layout (ownership avoids merge conflicts)
 ```
@@ -110,11 +110,35 @@ server/
   tools/g8.ts              (A)  graph8 SDK wrappers (+ allowlist guard)
   tools/tinyfish.ts        (C)
   webhooks/graph8.ts       (C)  verify signature → events → Closer
-  store.ts                 (A)  SQLite schema + queries
+  store.ts                 (A)  Supabase client + queries (always scoped by workspace_id)
+  llm.ts                   (A)  Gemini wrapper (function calling), swappable
   types.ts                 (all) shared contract — agree FIRST
 office/                    (B)  Next.js Agent Office (reads /api/state + SSE)
 scripts/                   (C)  smoke-test, seed test contacts, reset demo, simulate reply
 ```
+
+### 6.1 Multi-client (design now, build only what the demo needs)
+- **Built now:** `workspace_id` on every table; per-workspace graph8 key + Slack token stored in `workspaces`; every Slack event resolves its workspace first, then uses that client's graph8 key.
+- **Pitch slide only (not built):** public "Add to Slack" install for any company, billing/plans, self-serve "Sign in with graph8" (graph8 supports OAuth — our MCP used it).
+- **Onboarding answer for judges:** "Founder clicks Add to Slack → `/hire-sales theirsite.com` → connects graph8 once → Head of Sales takes over. Each client = own workspace row, own graph8 org, own keys and credit budgets."
+- **Deploy:** agents server (Bolt + orchestrator + webhooks, long-running) → **Railway/Fly.io**; Agent Office (Next.js) → **Vercel**; data/realtime/auth → **Supabase**; actions → client's **graph8** org; reasoning → **Gemini**. Demo may run the server on a laptop + tunnel; deploy if time allows.
+- **Known caveat:** Slack Socket Mode is fine for the demo; a public Slack Marketplace app needs HTTP events mode — a config switch in Bolt, same code.
+
+### 6.2 Demo-ready but real ("real path, pre-warmed state")
+Goal: the 5-minute demo never waits on slow work, **and** the same code works for a real client.
+
+1. **One code path.** No fake/mock branch. Demo speed comes from **pre-computed state**, not from faking results.
+2. **Reuse before redo (production behavior too).** Every agent step first checks the store / graph8 for a fresh result and reuses it:
+   - Company docs: graph8's Studio already generated the Global Context (ICP, personas, etc.) for our demo company → Head of Sales **reads** them in ~1s instead of starting a 30-min analysis. Real new client with no docs → Head kicks off `POST /intelligence/analyze` in the background and posts "analysing, back in ~30 min".
+   - Prospects, enrichment, "why now": cached per workspace; re-used unless stale.
+3. **Pre-warm script** (`scripts/prewarm.ts`, run before the demo): runs onboarding for the demo company end-to-end once (context read, Scout + Researcher results stored, sequence content drafted), so on stage the agents post in seconds. Same functions the live flow calls.
+4. **Long jobs never block.** Slow work runs async; the agent posts "working…" and reports when done. The demo only shows steps that are already warm or fast.
+5. **Time compression, not fake time.** `DEMO_TIME_SCALE` config: real clients get day-based delays; demo workspace uses minute/second delays (graph8 sequence `time_interval` is in seconds). Same code, different config.
+6. **graph8 sending window:** org default schedule is **Mon–Fri 09:00–17:00 UTC only** → demo is **Sunday** → create a **24/7 "Demo" schedule** and attach it to the demo sequence, or nothing sends.
+7. **Live trigger + backup.** A teammate replies from their phone live; backup `scripts/simulate-reply.ts` posts a signed webhook event if the tunnel/email is slow.
+8. **Reset script** (`scripts/reset-demo.ts`): returns the demo workspace to a known state (clear tasks/threads, remove test enrollments) so we can rehearse repeatedly.
+9. **Safety stays on:** demo sends only to `TEST_ALLOWLIST` (team contacts).
+10. **Rehearse 3× + record a backup video** of the full run.
 
 ## 7. Build layers (each layer = working demo)
 | Layer | Done when | Target |
@@ -159,6 +183,9 @@ scripts/                   (C)  smoke-test, seed test contacts, reset demo, simu
 | Claude/graph8 latency on stage | Pre-run L1 before demo; demo uses "fast-forward" for day gaps |
 | Credits burn | Per-agent budget caps enforced in orchestrator |
 | Sending to real people | `TEST_ALLOWLIST` hard guard in `tools/g8.ts` |
+| graph8 only sends Mon–Fri 09–17 UTC; demo is Sunday | Create 24/7 "Demo" sending schedule, attach to demo sequence (§6.2) |
+| Website → docs takes ~30 min | Demo company docs already exist in graph8 (23 docs for **8x.social**, generated 2026-09-26) → Head reads them; pre-warm script (§6.2) |
+| Gemini function calling quirks / latency | Keep prompts small, `llm.ts` swappable; pre-warm heavy steps |
 
 ## 12. Judge Q&A
 - **"graph8's Chief of Staff already does this."** → "It's an assistant inside graph8. We give a solo founder a whole accountable sales department — org chart, budgets, standups — in Slack, running the real multi-channel process on graph8. Every action is a graph8 object."
