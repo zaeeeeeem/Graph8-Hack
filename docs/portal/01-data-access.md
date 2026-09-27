@@ -19,9 +19,13 @@ workspace with `is_demo = true` (the seeded one) from these tables/views only:
 | view `portal_pipeline` | zero-filled count + deal value per stage, funnel order |
 | view `portal_needs_you` | pending approvals ∪ tasks blocked on the founder |
 | view `portal_today` | one row: every number for the today strip |
+| view `portal_activity` | **activity feed**: every agent step (tool / llm / slack / note) with agent name/role/emoji/color and task number/title |
+| `run_steps` (safe columns only) | same steps, raw; only for the realtime subscription. Columns: `id, run_id, workspace_id, seq, kind, name, summary, ok, credits_used, duration_ms, created_at` |
 
 **Not readable** (you get `permission denied`, by design): `workspace_secrets`, `contact_allowlist`,
-`lead_contacts`, `run_steps`, `inbound_events`. Never query them. Inserts/updates are denied everywhere.
+`lead_contacts`, `inbound_events`, and the columns `run_steps.args / result / error`. Never query them.
+`run_steps?select=*` also fails (it includes private columns) — always name columns, or use `portal_activity`.
+Inserts/updates are denied everywhere.
 
 Types: copy `shared/types.ts` into the app (`lib/types.ts`). Row interfaces match column names 1:1.
 `numeric` columns (`deal_amount`, `deals_value`, `demo_time_scale`) arrive as **strings** — `Number()` them.
@@ -96,6 +100,17 @@ export const qAgentRuns = (agentId: string) => supabase.from('agent_runs')
   .select('id,task_id,trigger,trigger_ref,status,summary,error,model,input_tokens,output_tokens,tool_call_count,credits_used,started_at,finished_at')
   .eq('agent_id', agentId).order('started_at', { ascending: false }).limit(50);
 
+// Activity feed (Office side panel / agent detail / task drawer). Newest first.
+export const qActivity = (opts: { agentId?: string; taskId?: string; runId?: string; limit?: number } = {}) => {
+  let q = supabase.from('portal_activity')
+    .select('id,run_id,agent_id,agent_name,agent_role,agent_emoji,agent_color,task_id,task_number,task_title,seq,kind,name,summary,ok,credits_used,duration_ms,created_at')
+    .eq('workspace_id', ws).order('created_at', { ascending: false }).order('id', { ascending: false }).limit(opts.limit ?? 50);
+  if (opts.agentId) q = q.eq('agent_id', opts.agentId);
+  if (opts.taskId) q = q.eq('task_id', opts.taskId);
+  if (opts.runId) q = q.eq('run_id', opts.runId);
+  return q;
+};
+
 export const qCreditEvents = (agentId: string) => supabase.from('credit_events')
   .select('id,task_id,run_id,lead_id,source,action,credits,note,created_at')
   .eq('agent_id', agentId).order('created_at', { ascending: false }).limit(100);
@@ -114,10 +129,14 @@ Simpler and enough here: load `qAgents()` once, keep an `agentsById` map in cont
 - Reports in a task thread: `reports.task_id`. Report direction: `from_agent_id` → `to_agent_id` (null = to the founder).
 - Lead timeline: `lead_events.lead_id`. Lead ↔ sequence: `leads.sequence_id`.
 - Runs: `agent_runs.agent_id`, `agent_runs.task_id`.
+- Steps: `run_steps.run_id` → `agent_runs` → agent/task. `portal_activity` already carries `agent_*` and `task_*`, so no join needed.
+  Within a run, order by `seq`. `kind` chip: `tool` "graph8/tool", `llm` "thinking", `slack` "Slack", `note` "note". `ok=false` → error colour.
+  `summary` is PII-free, one line, may be null (show `name` then).
 
 ## 4. Realtime
 
-Tables published: `workspaces, agents, tasks, reports, approvals, sequences, leads, lead_events`.
+Tables published: `workspaces, agents, tasks, reports, approvals, sequences, leads, lead_events, run_steps`.
+(`run_steps` streams INSERTs only; payload carries only the safe columns above.)
 Views are not streamed; when an underlying table changes, **refetch the view**.
 
 One channel per workspace, one subscription per table, filter by `workspace_id`:
@@ -138,6 +157,7 @@ const TABLE_TO_QUERIES: Record<string, string[]> = {
   sequences:   ['sequences'],
   leads:       ['leads', 'pipeline', 'today'],
   lead_events: ['lead-events', 'leads', 'today'],
+  run_steps:   ['activity'],
 };
 
 export function useWorkspaceRealtime() {
@@ -166,6 +186,15 @@ Rules:
 - Realtime honours RLS: the anon key only receives rows of `is_demo` workspaces. Private tables never stream.
 - Show a tiny "live" dot bound to `channel.state === 'joined'`; grey when reconnecting. No toasts for
   changes already visible on screen (Paperclip rule). A small highlight/pulse on the changed card is enough.
+- Activity feed can append without refetch if you want it snappier (the payload is safe, agent name is not in it):
+  ```ts
+  channel.on('postgres_changes',
+    { event: 'INSERT', schema: 'public', table: 'run_steps', filter: `workspace_id=eq.${WORKSPACE_ID}` },
+    ({ new: s }) => {            // s: { id, run_id, workspace_id, seq, kind, name, summary, ok, credits_used, duration_ms, created_at }
+      pending.add('activity'); clearTimeout(timer); timer = setTimeout(flush, 250); // simplest: refetch portal_activity
+    });
+  ```
+  Refetching `qActivity()` is the recommended path (it brings agent/task labels). A run writes several steps in a burst; the debounce handles it.
 - Add per-row animation: key rows by `id`, animate on `updated_at` change (agents/tasks) or on new `id` (events/reports).
 
 ## 5. Link-out rules (the only "actions" in the portal)
@@ -177,24 +206,15 @@ export const slackThread = (channel: string | null, ts: string | null) =>
 export const slackChannel = (channel: string | null) => channel ? `https://slack.com/archives/${channel}` : null;
 
 const G8 = process.env.NEXT_PUBLIC_G8_APP_URL ?? 'https://app.graph8.com';
-// See docs/graph8-app-links.md. LIST pages are verified in the browser. RECORD patterns are
-// UNVERIFIED (org had no rows yet) — so each builder falls back to the verified list page until
-// RECORD_VERIFIED is flipped. Judges must always land on a real graph8 page.
-const RECORD_VERIFIED = { contact: false, deal: false, sequence: false, meeting: false };
-const LIST = {
-  contacts:  `${G8}/contacts`,                    // verified
-  deals:     `${G8}/deals/pipeline`,              // verified (kanban)
-  sequences: `${G8}/sequencer`,                   // verified (NOT /sequences)
-  meetings:  `${G8}/appointments?tab=bookings`,   // verified (NOT /meetings)
-  settings:  `${G8}/studio/settings`,             // verified (connections live under tabs here)
-};
-export const g8Contact  = (id: string | null) => !id ? null : RECORD_VERIFIED.contact  ? `${G8}/contacts/${id}`  : LIST.contacts;
-export const g8Deal     = (id: string | null) => !id ? null : RECORD_VERIFIED.deal     ? `${G8}/deals/${id}`     : LIST.deals;
-export const g8Sequence = (id: string | null) => !id ? null : RECORD_VERIFIED.sequence ? `${G8}/sequencer/${id}` : LIST.sequences;
-export const g8Meeting  = (id: string | null) => !id ? null : RECORD_VERIFIED.meeting  ? `${G8}/appointments/${id}` : LIST.meetings;
-export const g8Settings = () => LIST.settings;
+// Verified on real records (27 Sep, live org). Meetings have no per-record page: use the bookings list.
+export const g8Contact  = (id: string | number | null) => id ? `${G8}/contacts/${id}` : null;
+export const g8Deal     = (id: string | number | null) => id ? `${G8}/deals/${id}` : null;
+export const g8Sequence = (id: string | null) => id ? `${G8}/sequencer/sequence/${id}` : null;   // NOT /sequences, NOT /sequencer/{id}
+export const g8Meeting  = (id: string | null) => id ? `${G8}/appointments?tab=bookings` : null;
+export const g8Deals    = () => `${G8}/deals/pipeline`;
+export const g8Settings = () => `${G8}/studio/settings`;
 ```
-We will send the record patterns once real rows exist (after the first live run); flipping `RECORD_VERIFIED` is the only change.
+Record patterns are verified; no placeholders left.
 
 | Object | Link label | Source columns | Hide when |
 |---|---|---|---|
@@ -208,7 +228,13 @@ We will send the record patterns once real rows exist (after the first live run)
 
 All links open in a new tab. Never render a disabled link; hide it.
 
-## 6. SQL snippets to make the seeded workspace move (we run these for you in the SQL editor — anon cannot write)
+## 6. SQL snippets (OBSOLETE since 12:00 — do not run)
+
+> The demo workspace now holds **live data** from the real server (fake seed wiped). Do **not** run these snippets
+> or `supabase/seed.sql` against it: that would overwrite the live run. To see things move, watch Slack: every
+> agent action writes to Supabase within ~1 s. Kept below only as a reference for the row shapes.
+
+### Original snippets (reference only)
 
 ```sql
 -- Bilal starts working on T-10 (card should pulse green, current task appears)

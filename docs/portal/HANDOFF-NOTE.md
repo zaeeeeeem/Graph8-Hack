@@ -1,7 +1,12 @@
 # Handoff note (paste to the front-end engineer)
 
-Hi — here is the Agent Office portal brief. You can build it end-to-end without us; the database is
-already seeded with a realistic fake day.
+Hi — here is the Agent Office portal brief. You can build it end-to-end without us.
+
+**Update 15:40 — LIVE DATA.** The fake seed is gone. Workspace `a0000000-0000-4000-8000-000000000001` is now fed by
+the real server: every Slack action (hire, Bilal finds, Hira researches, Usman launches, Zara handles replies) lands in
+Supabase within ~1 s. When we reset between rehearsals the workspace goes back to empty/onboarding (0 tasks, 0 leads) —
+your empty state must look good. Same URL + anon key as before; nothing changes on your side. Do NOT run
+`supabase/seed.sql` or the §6 snippets any more.
 
 **What it is:** a read-only, live web page showing a founder's AI sales team (5 agents in an org chart)
 at work. The founder acts in Slack; sales actions happen in graph8. The portal answers: is my team
@@ -19,11 +24,16 @@ Contract files: `shared/types.ts` (copy into the app), `docs/SCHEMA.md`, `supaba
 **Access:** you get our project's `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` (sent separately,
 never commit them). Anon key reads only the demo workspace and never sees emails/phones. No other keys needed and
 no writes possible from your side; ask us to run the "make it move" SQL snippets when you want to test realtime.
-Workspace id: `a0000000-0000-4000-8000-000000000001`. Code goes in `office/` in this repo (branch `portal`).
+Workspace id: `a0000000-0000-4000-8000-000000000001`. Code goes in `office/` in this repo (branch `frontend`).
+
+**New (activity feed):** agents' step-by-step work is now readable. Query view `portal_activity`
+(agent name/role/emoji/color, task number/title, `kind` tool/llm/slack/note, `name`, one-line PII-free `summary`, `ok`, `created_at`)
+and subscribe to `run_steps` INSERTs (already in the realtime hook table map) to refetch it. Exact query + snippet:
+`01-data-access.md` §2 `qActivity` and §4. Never `select *` on `run_steps` (private columns → permission denied).
 
 **Must-haves, in build order:** shell + realtime → Office (org-chart **canvas with pan/zoom/fit**, needs-you banner,
 today strip) → task drawer → pipeline → empty state. Then needs-you page, reports, agent detail if time.
-graph8 link paths in `lib/links.ts` are placeholders; we send verified patterns later.
+graph8 link paths are now **verified**: copy `lib/links.ts` from `01-data-access.md` §5 (contacts `/contacts/{id}`, deals `/deals/{id}`, sequences `/sequencer/sequence/{id}`, meetings → bookings list).
 **Never:** write actions, Approve buttons, showing PII, spinner pages, a login.
 
 **Deadlines (PKT, Sun 27 Sep):** Vercel URL by 16:30 for rehearsal, code freeze 17:30, demo 18:00.

@@ -1,0 +1,58 @@
+services:
+  - type: web
+    name: graphi-server
+    runtime: node
+    plan: starter
+    region: singapore
+    branch: main
+    rootDir: .
+    buildCommand: npm i -g pnpm@11.24.0 && pnpm install --frozen-lockfile && pnpm -C server typecheck
+    startCommand: pnpm -C server start
+    healthCheckPath: /healthz
+    numInstances: 1
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: 24.16.0
+      - key: LINKEDIN_SEND_NAMES
+        sync: false
+      - key: LINKEDIN_CONNECTED_NAMES
+        value: Zaeem
+      - key: G8_API_KEY
+        sync: false
+      - key: G8_BASE_URL
+        sync: false
+      - key: G8_WEBHOOK_SECRET
+        sync: false
+      - key: G8_DEMO_SCHEDULE_ID
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_MODEL
+        sync: false
+      - key: SLACK_BOT_TOKEN
+        sync: false
+      - key: SLACK_APP_TOKEN
+        sync: false
+      - key: SLACK_SIGNING_SECRET
+        sync: false
+      - key: SLACK_CHANNEL_TEAM
+        sync: false
+      - key: SLACK_CHANNEL_HQ
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: WORKSPACE_ID
+        sync: false
+      - key: PUBLIC_URL
+        sync: false
+      - key: PORT
+        sync: false
+      - key: TEST_ALLOWLIST
+        sync: false
+      - key: LAYERS_DISABLED
+        sync: false
+      - key: SLACK_DISABLED
+        sync: false

@@ -29,7 +29,7 @@ and answers any sales question about the team in plain words.
 | D9 | Channels | `#sales-hq` = founder ↔ Ayesha only (plan, decisions, wins, standup). `#sales-team` = one thread per task where Bilal/Hira/Usman/Zara work. |
 | D10 | Missing channel | Ask + continue: post `[Connect in graph8]`, launch with what works (email), add the missing channel's steps once connected. |
 | D11 | Daily run | Every day 09:00 PKT: standup, then the daily run (find 10 → research 5 → build sequence → ask to launch). |
-| D12 | Pipeline | graph8 org has 0 pipelines. During onboarding Ayesha creates one from graph8's suggestion (small credit cost). Closer's deals land there. |
+| D12 | Pipeline | **Changed in Zara session (Z4):** use the existing graph8 "Sales Pipeline" (9 stages incl. New Meeting … Closed Won/Lost). Onboarding only looks it up; no AI-suggested pipeline is created. Closer's deals land in "New Meeting". |
 | D13 | Real credits | Standup shows real graph8 balance (from `/usage`) next to our budgets. Alert in `#sales-hq` if under 1,000. Internal budgets are 100,000/day (never block demo). |
 | D14 | Target pick | Ayesha picks the top-priority persona/ICP, says why in one line, lists 1–2 alternatives. Founder redirects by chat. |
 | D15 | Memory | Last ~20 messages of the thread/DM + fresh data every time + saved founder preferences. No long-term memory store. |
@@ -43,7 +43,7 @@ and answers any sales question about the team in plain words.
 | Thing | State | Effect on Ayesha |
 |---|---|---|
 | Global Context | 23 docs, all completed (icp_research, persona_research, brand_voice, value_props, competitors, …) | Onboarding reads these in ~1 s (D2) |
-| Pipelines | 0 | Create during onboarding (D12) |
+| Deal pipeline | 1 existing "Sales Pipeline" (9 stages) via `g8_get_pipeline`; `g8_gtm_list_pipelines` (GTM pipelines) is empty | Look up and reuse (D12) |
 | Mailboxes | 1 active Gmail, daily limit 40, no warmup | Email channel works |
 | LinkedIn senders | 0 | Missing channel flow (D10) |
 | Voice numbers | 1 (Twilio), daily limit 40 | Phone step possible |
@@ -59,7 +59,8 @@ Every tool call is logged as a `run_steps` row under the current `agent_runs` ro
 |---|---|---|---|---|---|---|
 | T1 | `read_company_brain` | `workspaceId` | `SalesBrain { company, offer, icps[], personas[], voice, competitors, sources[] }` | `GET /global-context/documents` (`include_content=true`), `GET /icps`, `GET /personas` | free | `workspaces.sales_brain` |
 | T2 | `start_company_analysis` | `workspaceId, domain` | `{ g8_task_id }` | `POST /intelligence/analyze`; completion via webhook `intelligence.completed` / `company_intelligence.completed` | billable (LLM tokens) | task `onboard` → `blocked_on='graph8'` |
-| T3 | `setup_pipeline` | `workspaceId` | `{ g8_pipeline_id, stages[] }` | `POST /pipelines/suggest` (sync, not persisted) → `POST /pipelines/from-suggestion` | credits (g8_t2 tier, 1 call) | `workspaces` pipeline id (column TBD, see §8) |
+| T3 | `find_pipeline` | `workspaceId` | `{ g8_pipeline_id, stages[] }` | `GET /deals/pipelines` (`g8_get_pipeline`) → pick default "Sales Pipeline", stage "New Meeting" | free | `workspaces` pipeline id (column TBD, see §8) |
+| T16 | `setup_meeting_type` | `workspaceId` | `{ event_type_id, booking_url }` | `POST /appointments/event-types` (30-min "Discovery call") + Google Meet conferencing (`g8_appointments_connect_conferencing`). Needs founder's Google Calendar connected (browser login) → else `[Connect Google Calendar]` button. | free | workspace settings (see §8). Added from Zara session (Z6). |
 | T4 | `check_channels` | `workspaceId` | `{ email: {ok, mailbox, daily_limit}, linkedin: {ok, senders}, phone: {ok, numbers} }` | `GET /mailboxes`, `GET /workflows/integrations/linkedin/senders`, `GET /voice/dialer/numbers` | free | missing → `approvals` `connect_account` |
 | T5 | `check_credits` | `workspaceId` | `{ available, held, used }` | `GET /usage` | free | alert `reports` kind `alert` if < 1,000 |
 | T6 | `delegate_task` | `agentRole, kind, title, input, parentTaskId` | `{ taskId, threadTs }` | none | free | `tasks` (child) + parent `blocked_on='task'`; posts thread in `#sales-team` |
@@ -70,6 +71,8 @@ Every tool call is logged as a `run_steps` row under the current `agent_runs` ro
 | T11 | `update_settings` | `patch` (e.g. `{ daily_find: 20, target_persona: '…', geo: ['UK'] }`) | new settings | none | free | workspace settings (column TBD, see §8) |
 | T12 | `pause_team` / `resume_team` | `workspaceId, reason?` | `{ agents[] }` | none | free | `agents.status` `paused` / `idle` |
 | T13 | `setup_intent_tracking` | `workspaceId, persona` | `{ keyword groups }` | `g8_intent_add_keywords` (keywords + `jobs` / `job_changes` from the ICP) | free to create; ~1 credit per 10 events processed | workspace settings (see §8). Added from Bilal session (B10). |
+| T14 | `setup_ai_research` | `workspaceId, salesBrain` | `{ group_id }` | graph8 AI enrichment config (`web-research`, see `GET /enrichment/ai/configs`) | free to create; LLM credits when run | workspace settings (see §8). Added from Hira session (H7). |
+| T15 | `setup_voice_agent` | `workspaceId, salesBrain` | `{ voice_agent_name }` | graph8 voice agent creation (API to verify) on number +19802944116 | free to create; ~20 credits/min when calling | workspace settings (see §8). Added from Usman session (U8). Founder confirms first. |
 
 ## 5. Playbooks (fixed order, Gemini inside steps)
 
@@ -80,7 +83,7 @@ Every tool call is logged as a `run_steps` row under the current `agent_runs` ro
 3. **T1 read_company_brain.** No docs → T2 + "back in ~30 min" (D16) and stop; resume on webhook.
 4. Gemini: pick target persona/ICP + 1–2 alternatives + one-line why (D14).
 5. **T4 check_channels.** Missing channel → T7 `connect_account` (does not block, D10).
-6. **T3 setup_pipeline** (D12) + **T13 setup_intent_tracking** (Bilal B10).
+6. **T3 find_pipeline** (D12) + **T16 setup_meeting_type** (Zara Z6) + **T13 setup_intent_tracking** (Bilal B10) + **T14 setup_ai_research** (Hira H7) + **T15 setup_voice_agent** (Usman U8).
 7. **T5 check_credits.**
 8. Post plan card (report kind `plan`): target, why, daily numbers, channels, team (org chart), budget, first standup time.
    Checklist message ends ✅.
@@ -117,7 +120,7 @@ Every tool call is logged as a `run_steps` row under the current `agent_runs` ro
 
 - Ack: `On it, hiring your sales team for 8x.social 👀`
 - Checklist (edited in place):
-  `✅ Read 23 company docs · ✅ Target: Series A–B fintech CFOs (UK/US) · ✅ Pipeline ready in graph8 · ⚠️ LinkedIn not connected, starting with email · ⏳ Bilal finding 10 leads…`
+  `✅ Read 23 company docs · ✅ Target: Series A–B fintech CFOs (UK/US) · ✅ Pipeline + Discovery call ready in graph8 · ⚠️ LinkedIn not connected, starting with email · ⏳ Bilal finding 10 leads…`
 - Plan card: target + why, daily numbers, channels, team, budget, `[Open Agent Office]`.
 - Launch ask: `Ready to launch to 5 leads (email → phone). One decision for you 👇 [Launch] [Edit] [Skip]`
 - Out of scope, sales: `I can't do that yet. Right now I can find leads, research them, run outreach, and report on the pipeline.`
@@ -127,12 +130,12 @@ Every tool call is logged as a `run_steps` row under the current `agent_runs` ro
 
 - Never sends to anyone. Outreach only through Usman/Zara, and the `g8.ts` guard allows only `contact_allowlist` /
   `is_test_contact`.
-- Credit-spending graph8 calls (T2, T3) are logged in `credit_events` (source graph8). LLM usage logged as source llm.
+- Credit-spending graph8 calls (T2) are logged in `credit_events` (source graph8). LLM usage logged as source llm.
 - No PII in `reports.body`, `tasks.result_summary`, or Slack summaries in `#sales-hq`.
 
 ## 8. Open items (to settle at build time)
 
-1. Verify exact shapes of T1, T3, T4, T5 endpoints live (free GETs; T3 costs credits, test once).
+1. Verify exact shapes of T1, T3, T4, T5 endpoints live (free GETs).
 2. Schema: where to store `g8_pipeline_id` and workspace settings (defaults, target persona, geo). Likely
    `workspaces.settings jsonb` + `workspaces.g8_pipeline_id` in migration `002`.
 3. Slack "live checklist" needs `chat.update` on the ack message; store its `ts` on the task.
