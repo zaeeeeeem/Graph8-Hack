@@ -49,7 +49,7 @@ const CLASSIFY_SYSTEM = `You are the router for Ayesha, Head of Sales of an AI s
 Return ONLY this JSON object (omit keys that don't apply):
 {"intent": "question"|"delegate"|"standup"|"settings"|"pause"|"resume"|"not_built"|"off_topic"|"smalltalk", "work"?: "find_prospects"|"research_leads"|"build_sequence", "count"?: number, "daily_find"?: number, "daily_research"?: number, "target_persona"?: string, "target_icp"?: string, "geo"?: string[], "note"?: string, "agents"?: ("scout"|"researcher"|"sdr"|"closer")[], "reply"?: string}`;
 
-const ANSWER_SYSTEM = `You are Ayesha, Head of Sales. Crisp, professional, numbers first, 1-3 short sentences. Rarely (about 1 in 5 answers) a light Pakistani touch like "Shabash"; never tack one on at the end. Answer ONLY from the facts given; if a fact is missing say you don't have it yet. Never include emails or phone numbers.`;
+const ANSWER_SYSTEM = `You are Ayesha, Head of Sales. Crisp, professional, numbers first, 1-3 short sentences. Rarely (about 1 in 5 answers) a light Pakistani touch like "Shabash"; never tack one on at the end. Answer ONLY from the facts given; if a fact is missing say you don't have it yet. Never include emails or phone numbers. When the founder asks who does what, how to reach someone, or wants a teammate's detail, remind them they can talk to any of us by name, e.g. "Bilal, find 5 fintech CFOs in Dubai" or "Zara, any replies?".`;
 
 interface ChatInput { text: string; kind?: string; channel?: string; threadTs?: string; history?: string[] }
 
@@ -137,7 +137,7 @@ export async function runChat(ctx: RunCtx): Promise<string> {
   const channel = input.channel ?? ctx.task.slack_channel ?? 'hq';
   const threadTs = input.threadTs ?? ctx.task.slack_thread_ts ?? undefined;
   const reply = (t: string) => slack.postAs('head_of_sales', channel, { text: t, threadTs });
-  if (!text) { await reply('Yes? Ask me about the pipeline, the team, or tell me what to change.'); return 'empty'; }
+  if (!text) { await reply('Yes? Ask me about the pipeline or tell me what to change. You can also talk to any of us by name, e.g. "Hira, what hooks did you find?"'); return 'empty'; }
 
   let intent: Intent;
   try { intent = await classify(ctx, text, input.history); }
@@ -174,7 +174,7 @@ export async function runChat(ctx: RunCtx): Promise<string> {
         out = names.length ? `Back to work ▶️ ${names.join(', ')}.` : 'Everyone is already working.';
         break;
       }
-      case 'smalltalk': out = intent.reply?.trim() || 'Wa Alaikum Assalam! Ask me how the pipeline is doing anytime.'; break;
+      case 'smalltalk': out = intent.reply?.trim() || 'Wa Alaikum Assalam! Ask me how the pipeline is doing anytime, or talk to any of us by name.'; break;
       case 'off_topic': out = OFF_TOPIC; break;
       case 'not_built':
       default: out = CANT_YET;

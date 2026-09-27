@@ -65,8 +65,11 @@ export interface BusEvents {
   'slack.command': { command: string; text: string; ctx: SlackCtx };
   /** Button/select. actionId e.g. 'approval.approve' | 'approval.edit' | 'approval.skip' | 'plan.start' … value = our id. */
   'slack.action': { actionId: string; value: string; ctx: SlackCtx };
-  /** Founder message: DM, @mention, or reply in one of our threads. */
-  'slack.message': { text: string; ctx: SlackCtx; kind: 'dm' | 'mention' | 'thread_reply' };
+  /**
+   * Founder message: DM, @mention, reply in one of our threads, or a top-level #sales-team/#sales-hq message that
+   * addresses an agent by name ("Bilal, find 5 fintech CFOs"). `addressed` = the agent the founder is talking to.
+   */
+  'slack.message': { text: string; ctx: SlackCtx; kind: 'dm' | 'mention' | 'thread_reply'; addressed?: AgentRole };
   /** Normalised graph8 event (webhook or poll), already deduped via inbound_events. */
   'graph8.event': { type: string; payload: JsonObject; inboundEventId: number | string; workspaceId: UUID };
   /** Cron ticks. */

@@ -36,7 +36,7 @@ const h = vi.hoisted(() => {
 });
 const S = h.state;
 
-vi.mock('../src/lib/bus', () => ({ bus: { on: (ev: string, fn: any) => { h.state.handlers[ev] = fn; }, emit: () => undefined } }));
+vi.mock('../src/lib/bus', () => ({ bus: { on: (ev: string, fn: any) => { h.state.handlers[ev] = fn; }, emit: vi.fn() } }));
 vi.mock('../src/lib/env', () => ({ env: { WORKSPACE_ID: 'ws-1', G8_DEMO_SCHEDULE_ID: 'sched-1', allowlist: [], layersDisabled: [] } }));
 vi.mock('../src/lib/log', () => {
   const l: any = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
@@ -81,6 +81,9 @@ import ayesha, { mirrorReport, pollReports } from '../src/agents/ayesha';
 import { CANT_YET, OFF_TOPIC, settingsPatch } from '../src/agents/ayesha/chat';
 import { companyName, whyLine } from '../src/agents/ayesha/onboarding';
 import { normDomain, scrubPii } from '../src/agents/ayesha/util';
+import { runCrewChat } from '../src/agents/ayesha/crew';
+import { addressedRole } from '../src/slack/events';
+import { bus } from '../src/lib/bus';
 
 const G8_OK: Record<string, any> = {
   '/global-context/documents': { data: [
@@ -392,5 +395,118 @@ describe('plan copy helpers', () => {
     vi.mocked(g8.get).mockRejectedValue(new Error('404'));
     expect(await companyName('8x.social', '8x')).toBe('8x.social');
     expect(await companyName('acme.io', 'Acme Robotics')).toBe('Acme Robotics');
+  });
+});
+
+describe('talk to agents by name', () => {
+  const sctx = { workspaceId: 'ws-1', userId: 'U1', channel: 'C_TEAM', threadTs: '100.1', messageTs: '100.1' };
+
+  it('detects the addressed agent at the start of a message', () => {
+    expect(addressedRole('Bilal, find 5 fintech CFOs in Dubai')).toBe('scout');
+    expect(addressedRole('hey Hira what hooks did you find?')).toBe('researcher');
+    expect(addressedRole('Zara any replies?')).toBe('closer');
+    expect(addressedRole('@usman make the emails shorter')).toBe('sdr');
+    expect(addressedRole('<@U0BOT> Zara any replies?')).toBe('closer');
+    expect(addressedRole('Ayesha: standup please')).toBe('head_of_sales');
+    expect(addressedRole('I think bilal did well')).toBeUndefined();
+    expect(addressedRole('Hiral is my cousin')).toBeUndefined();
+    expect(addressedRole('lunch?')).toBeUndefined();
+  });
+
+  it('named message → that agent runs the chat, not Ayesha', async () => {
+    vi.mocked(llm.json).mockResolvedValueOnce({ intent: 'question' } as any);
+    vi.mocked(llm.text).mockResolvedValueOnce('I found 12 leads, 4 are strong fits.');
+    await S.handlers['slack.message']({ kind: 'mention', text: 'Bilal how many leads?', addressed: 'scout', ctx: sctx });
+    expect(runtime.enqueue).not.toHaveBeenCalled();
+    expect(S.posts.at(-1)).toMatchObject({ role: 'scout', channel: 'C_TEAM', msg: { text: 'I found 12 leads, 4 are strong fits.', threadTs: '100.1' } });
+  });
+
+  it('no name / Ayesha → Ayesha as before', async () => {
+    await S.handlers['slack.message']({ kind: 'dm', text: 'Ayesha, pipeline?', addressed: 'head_of_sales', ctx: { ...sctx, channel: 'D1', threadTs: undefined } });
+    expect(runtime.enqueue).toHaveBeenCalledWith('ws-1', 'head_of_sales', 'answer_question', expect.any(String), expect.objectContaining({ text: 'Ayesha, pipeline?' }), expect.anything());
+  });
+
+  it('Bilal work → enqueued straight to scout with persona/geo/count + in-voice ack', async () => {
+    vi.mocked(llm.json).mockResolvedValueOnce({ intent: 'work', count: 5, persona: 'CFOs at fintech companies', geo: ['Dubai'] } as any);
+    const out = await runCrewChat({ role: 'scout', text: 'Bilal, find 5 fintech CFOs in Dubai', ctx: sctx, kind: 'mention' });
+    expect(out).toBe('enqueued T-9');
+    expect(runtime.enqueue).toHaveBeenCalledWith('ws-1', 'scout', 'find_prospects', 'Find 5 prospects: CFOs at fintech companies in Dubai',
+      expect.objectContaining({ count: 5, target_persona: 'CFOs at fintech companies', geo: ['Dubai'], requested_by: 'founder_chat' }),
+      expect.objectContaining({ slack: sctx }));
+    expect(S.posts.at(-1)).toMatchObject({ role: 'scout', msg: { threadTs: '100.1' } });
+    expect(S.posts.at(-1)!.msg.text).toContain('T-9');
+  });
+
+  it('Hira work without a list → asks for Bilal first, nothing enqueued', async () => {
+    vi.mocked(llm.json).mockResolvedValueOnce({ intent: 'work', count: 3 } as any);
+    await runCrewChat({ role: 'researcher', text: 'Hira research 3 leads', ctx: sctx, kind: 'mention' });
+    expect(runtime.enqueue).not.toHaveBeenCalled();
+    expect(S.posts.at(-1)).toMatchObject({ role: 'researcher' });
+    expect(S.posts.at(-1)!.msg.text).toContain('Bilal');
+  });
+
+  it('out of scope → hands off in voice and the right agent answers', async () => {
+    vi.mocked(llm.json)
+      .mockResolvedValueOnce({ intent: 'handoff', handoff_to: 'zara' } as any)
+      .mockResolvedValueOnce({ intent: 'question' } as any);
+    vi.mocked(llm.text).mockResolvedValueOnce('2 replies this week, 1 meeting booked.');
+    await runCrewChat({ role: 'scout', text: 'Bilal any replies?', ctx: sctx, kind: 'mention' });
+    expect(S.posts.map((p) => [p.role, p.msg.text])).toEqual([
+      ['scout', "That's Zara's call. Zara, over to you."],
+      ['closer', '2 replies this week, 1 meeting booked.'],
+    ]);
+  });
+
+  it('settings / pause → handed to Ayesha on her queue, same thread', async () => {
+    vi.mocked(llm.json).mockResolvedValueOnce({ intent: 'handoff', handoff_to: 'ayesha' } as any);
+    await runCrewChat({ role: 'sdr', text: 'Usman pause the team', ctx: sctx, kind: 'mention' });
+    expect(S.posts[0]).toMatchObject({ role: 'sdr', msg: { text: "That's Ayesha's call. Ayesha, over to you." } });
+    expect(runtime.enqueue).toHaveBeenCalledWith('ws-1', 'head_of_sales', 'answer_question', expect.any(String),
+      expect.objectContaining({ text: 'Usman pause the team', threadTs: '100.1' }), expect.anything());
+  });
+
+  it('handoff never bounces twice', async () => {
+    vi.mocked(llm.json)
+      .mockResolvedValueOnce({ intent: 'handoff', handoff_to: 'hira' } as any)
+      .mockResolvedValueOnce({ intent: 'handoff', handoff_to: 'bilal' } as any);
+    await runCrewChat({ role: 'scout', text: 'x', ctx: sctx, kind: 'mention' });
+    expect(S.posts.map((p) => p.role)).toEqual(['scout', 'researcher']);
+    expect(S.posts[1].msg.text).toContain('Ayesha');
+    expect(runtime.enqueue).toHaveBeenCalledWith('ws-1', 'head_of_sales', 'answer_question', expect.any(String), expect.anything(), expect.anything());
+  });
+
+  it('Usman revise with a pending launch card → Edit flow via runtime (edit_requested + note in card thread)', async () => {
+    S.tables.approvals = [{ id: 'appr-9', title: 'Launch', slack_ts: '555.1', slack_channel: 'C_HQ', status: 'pending' }];
+    vi.mocked(llm.json).mockResolvedValueOnce({ intent: 'revise', note: 'make email 2 shorter' } as any);
+    const out = await runCrewChat({ role: 'sdr', text: 'Usman make email 2 shorter', ctx: sctx, kind: 'mention' });
+    expect(out).toBe('edit appr-9');
+    const w = S.writes.find((x) => x.table === 'approvals' && x.op === 'update');
+    expect(w?.values).toMatchObject({ status: 'edit_requested', decided_by_slack_user: 'U1' });
+    expect(bus.emit).toHaveBeenCalledWith('slack.message', expect.objectContaining({ kind: 'thread_reply', text: 'make email 2 shorter', ctx: expect.objectContaining({ channel: 'C_HQ', threadTs: '555.1' }) }));
+  });
+
+  it("Zara drafts a reply in thread (not sent) when no reply card is pending", async () => {
+    S.tables.leads = [{ id: 'l1', full_name: 'Sara Khan', job_title: 'CFO', company_name: 'PayCo', stage: 'replied', research: {} }];
+    S.tables.lead_events = [{ type: 'reply_classified', summary: 'Intent: interested, asks for pricing' }];
+    vi.mocked(llm.json).mockResolvedValueOnce({ intent: 'draft_reply', lead_name: 'Sara', note: 'offer a call Tuesday' } as any);
+    vi.mocked(llm.text).mockResolvedValueOnce('Hi Sara, happy to walk you through pricing. Mail me at x@y.com');
+    // approvals query returns [] via the table default; pendingApproval → null
+    S.tables.approvals = [];
+    const out = await runCrewChat({ role: 'closer', text: 'Zara draft a reply to Sara', ctx: sctx, kind: 'mention' });
+    expect(out).toBe('drafted');
+    const post = S.posts.at(-1)!;
+    expect(post.role).toBe('closer');
+    expect(post.msg.text).toContain('not sent');
+    expect(post.msg.text).not.toMatch(/@y\.com/);
+  });
+
+  it('named ask in another agent’s approval thread is answered; un-named chatter there is ignored', async () => {
+    S.tables.approvals = [{ id: 'a1', kind: 'launch_sequence', status: 'pending', requested_by_agent_id: 'ag-sdr' }];
+    await S.handlers['slack.message']({ kind: 'thread_reply', text: 'looks good', ctx: { ...sctx, threadTs: '555.1' } });
+    expect(llm.json).not.toHaveBeenCalled();
+    expect(runtime.enqueue).not.toHaveBeenCalled();
+    S.tables.approvals = [{ id: 'a1', kind: 'launch_sequence', status: 'edit_requested', requested_by_agent_id: 'ag-sdr' }];
+    await S.handlers['slack.message']({ kind: 'thread_reply', text: 'Usman shorter', addressed: 'sdr', ctx: { ...sctx, threadTs: '555.1' } });
+    expect(llm.json).not.toHaveBeenCalled();
   });
 });
