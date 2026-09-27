@@ -120,7 +120,7 @@ export interface G8 {
 // ---------------------------------------------------------------------------
 // llm — Gemini. Every call records source='llm' spend for the agent.
 // ---------------------------------------------------------------------------
-export interface LlmCallOpts { agentId: UUID; workspaceId: UUID; taskId?: UUID; system?: string; temperature?: number }
+export interface LlmCallOpts { agentId: UUID; workspaceId: UUID; taskId?: UUID; system?: string; temperature?: number; /** Skip model thinking (short status lines). */ fast?: boolean }
 export interface Llm {
   text(prompt: string, opts: LlmCallOpts): Promise<string>;
   /** JSON mode; `schema` is a zod schema; result validated. */

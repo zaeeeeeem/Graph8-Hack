@@ -25,8 +25,8 @@ export async function voiceLine(
     `No quotes, no email addresses. Return only the sentence.\n\nUpdate: ${fallback}`;
   try {
     const out = await Promise.race([
-      llm.text(prompt, { workspaceId: opts.workspaceId, agentId: opts.agentId, taskId: opts.taskId, temperature: 0.9 }),
-      new Promise<null>((r) => setTimeout(() => r(null), opts.timeoutMs ?? 3000)),
+      llm.text(prompt, { workspaceId: opts.workspaceId, agentId: opts.agentId, taskId: opts.taskId, temperature: 0.9, fast: true }),
+      new Promise<null>((r) => setTimeout(() => r(null), opts.timeoutMs ?? 6500)),
     ]);
     const line = (out ?? '').trim().replace(/^["']|["']$/g, '');
     if (!line || line.length > 240 || /@\S+\.\w/.test(line)) return fallback;

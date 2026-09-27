@@ -29,6 +29,7 @@ async function call(prompt: string, opts: LlmCallOpts, json: boolean): Promise<s
           ...(opts.system ? { systemInstruction: opts.system } : {}),
           ...(opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
           ...(json ? { responseMimeType: 'application/json' } : {}),
+          ...(opts.fast ? { thinkingConfig: { thinkingBudget: 0 } } : {}),
           abortSignal: AbortSignal.timeout(90_000),
         },
       });
