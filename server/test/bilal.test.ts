@@ -14,7 +14,7 @@ vi.mock('../src/lib/slack', () => ({ slack: m.slack }));
 vi.mock('../src/layers', () => ({ layers: m.layers }));
 vi.mock('../src/lib/env', () => ({ env: { allowlist: [] } }));
 
-import bilalDefault, { bilal } from '../src/agents/bilal';
+import bilalDefault, { bilal, saveTiming } from '../src/agents/bilal';
 import { fakeDb } from '../src/agents/bilal/fakedb';
 import { heuristicPlan, sanitizePlan, toFilters, widen, type SearchPlan } from '../src/agents/bilal/filters';
 import { rank, score, toProspect, type Prospect } from '../src/agents/bilal/score';
@@ -257,6 +257,37 @@ describe('bilal.run', () => {
     expect(rank([a, b], 1)[0].full_name).toBe('First1 Last1'); // B13 confidence tier first
     const c2 = score(toProspect(row(3, { work_email: '***' })), plan());
     expect(rank([a, c2], 1)[0].full_name).toBe('First3 Last3');
+  });
+
+  it('saves via /search/contacts/save (real emails land in lead_contacts only), asserts the misses', async () => {
+    saveTiming.pollMs = 1; saveTiming.maxWaitMs = 30;
+    const base = m.g8.post.getMockImplementation()!;
+    m.g8.post.mockImplementation(async (path: string, body: any) => {
+      if (path === '/search/contacts/save') return { data: { list_id: 88, status: 'processing' } };
+      return base(path, body);
+    });
+    const baseGet = m.g8.get.getMockImplementation()!;
+    m.g8.get.mockImplementation(async (path: string, q: any) => {
+      if (path === '/lists/88/contacts') return { data: Array.from({ length: 9 }, (_, i) => ({ id: 2000 + i, first_name: `First${i + 1}`, last_name: `Last${i + 1}`, linkedin_url: `linkedin.com/in/p${i + 1}`, work_email: `p${i + 1}@co${i + 1}.com` })) };
+      return baseGet(path, q);
+    });
+    const c = ctx();
+    await bilal.run(c);
+    const save = m.g8.post.mock.calls.find((x) => x[0] === '/search/contacts/save')!;
+    expect(save[1].filters[0]).toMatchObject({ field: 'linkedin_url', operator: 'any_of' });
+    expect(save[1].filters[0].value).toContain('linkedin.com/in/p1');
+    expect(m.g8.post.mock.calls.filter((x) => x[0] === '/lists')).toHaveLength(1); // only the TEST list
+    const prospectAssert = m.g8.put.mock.calls.find((x) => x[1].list_id === 88)!;
+    // only the ones search-save missed (members were p1..p9)
+    const asserted = prospectAssert[1].contacts.map((x: any) => x.linkedin_url);
+    expect(asserted.length).toBeGreaterThan(0);
+    expect(asserted.every((u: string) => !/\/p[1-9]$/.test(u))).toBe(true);
+    const real = db.tables.leads.filter((l) => !l.is_test_contact && l.id !== 'old');
+    expect(real.every((l) => l.g8_list_id === '88')).toBe(true);
+    const withEmail = db.tables.lead_contacts.filter((x) => x.email && real.some((l) => l.id === x.lead_id));
+    expect(withEmail.length).toBe(10 - asserted.length);
+    for (const e of db.tables.lead_events) expect(e.summary).not.toMatch(PII);
+    expect(JSON.stringify(c.report.mock.calls)).not.toMatch(PII);
   });
 
   it('does not re-add TEST leads on later runs', async () => {

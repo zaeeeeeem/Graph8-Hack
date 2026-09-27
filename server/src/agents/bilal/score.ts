@@ -22,6 +22,8 @@ export interface Prospect {
   country: string;
   state: string;
   linkedin_url: string;
+  /** As graph8 returned it (exact value for `linkedin_url any_of` filters). */
+  linkedin_raw: string;
   confidence_score: number;
   /** graph8 holds a (masked `***`) work email / phone for this person → unlock can reveal it (live 10:25 PKT). */
   has_email: boolean;
@@ -50,6 +52,7 @@ export function toProspect(row: Record<string, any>): Prospect {
     country: s(row.country) || s(row.company_country),
     state: s(row.state),
     linkedin_url: normLinkedin(s(row.linkedin_url)),
+    linkedin_raw: s(row.linkedin_url),
     confidence_score: typeof row.confidence_score === 'number' ? row.confidence_score : 0,
     has_email: !!(row.work_email && String(row.work_email).trim()),
     has_phone: !!((row.mobile_phone && String(row.mobile_phone).trim()) || (row.direct_phone && String(row.direct_phone).trim())),

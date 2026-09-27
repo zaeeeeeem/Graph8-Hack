@@ -12,7 +12,7 @@ import { describeWidened, personaToPlan, toFilters, widen, type SearchFilter, ty
 import { prospectKey, rank, score, toProspect, type Prospect } from './bilal/score';
 import {
   asArray, collectHandles, eachLayer, errMsg, g8ContactUrl, normDomain, normLinkedin, openProgress, pool, realEmail, realPhone,
-  retryOnce, todayLabel, unwrap,
+  retryOnce, sleep, todayLabel, unwrap,
 } from './bilal/util';
 
 export const SEARCH_LIMIT = 100;
@@ -127,6 +127,35 @@ export function matchMember(members: any[], m: { linkedin?: string; email?: stri
     ?? members.find((r) => m.last && String(r.last_name ?? '').toLowerCase() === m.last.toLowerCase()
       && String(r.first_name ?? '').toLowerCase() === (m.first ?? '').toLowerCase());
   return { g8ContactId: hit?.id != null ? String(hit.id) : null, g8CompanyId: hit?.company_id != null ? String(hit.company_id) : null };
+}
+
+/**
+ * Preferred save (live 10:35 PKT): `POST /search/contacts/save` with `linkedin_url any_of <top N>` creates a list whose
+ * contacts carry graph8's protected data (real work email, 0 unlock credits), unlike assert/batch (empty records).
+ * 202 + `{list_id, status:'processing'}` → poll the list until the members land (≈3 s). Returns null on failure.
+ */
+export const saveTiming = { pollMs: 2_000, maxWaitMs: 30_000 };
+export async function saveViaSearch(listTitle: string, ps: Prospect[]): Promise<{ listId: string; members: any[] } | null> {
+  const lis = [...new Set(ps.map((p) => p.linkedin_raw).filter(Boolean))];
+  if (!lis.length) return null;
+  try {
+    const r = unwrap<any>(await retryOnce(() => g8.post('/search/contacts/save', {
+      filters: [{ field: 'linkedin_url', operator: 'any_of', value: lis }], page: 1, limit: 100, max_results: lis.length, list_title: listTitle,
+    })));
+    const id = r?.list_id ?? r?.id;
+    if (id == null) return null;
+    const listId = String(id);
+    const deadline = Date.now() + saveTiming.maxWaitMs;
+    let members: any[] = [];
+    while (Date.now() < deadline) {
+      members = await listMembers(listId).catch(() => []);
+      if (members.length >= lis.length) break;
+      await sleep(saveTiming.pollMs);
+    }
+    return { listId, members };
+  } catch {
+    return null;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -259,9 +288,13 @@ async function run(ctx: RunCtx): Promise<string> {
   // 4. S5 save — one list per run + TEST contacts on first run (U5)
   await pr.set('save', 'doing');
   const listName = `Sales Team · ${todayLabel()} · ${plan.label}`.slice(0, 120);
-  const listId = await createList(listName, `Bilal (Scout) run T-${ctx.task.number}: ${persona}`.slice(0, 250));
   const tests = await loadTestContacts(ctx.workspaceId);
-  const saved = await assertIntoList(listId, top.map(assertBody));
+  const viaSearch = await saveViaSearch(listName, top);
+  const listId = viaSearch?.listId ?? await createList(listName, `Bilal (Scout) run T-${ctx.task.number}: ${persona}`.slice(0, 250));
+  // Anyone the search-save missed (or everyone, if it failed) is upserted by assert/batch into the same list.
+  const missed = top.filter((p) => !viaSearch || !matchMember(viaSearch.members, { linkedin: p.linkedin_url }).g8ContactId);
+  const saved = await assertIntoList(listId, missed.map(assertBody));
+  const savedVia = viaSearch ? `search-save ${top.length - missed.length}, assert ${missed.length}` : 'assert (search-save unavailable)';
   let testSaved = { created: 0, updated: 0, errors: 0 };
   // TEST teammates get their OWN list: graph8 `/run` enrolls a sequence's whole associated list (verify core.md),
   // so real prospects and contactable teammates must never share one.
@@ -280,7 +313,7 @@ async function run(ctx: RunCtx): Promise<string> {
   }
   const members = await listMembers(listId);
   if (testListId) testMembers = await listMembers(testListId);
-  await ctx.step('tool', 'save_leads', `Saved ${top.length} prospects to graph8 list ${listId} (created ${saved.created}, updated ${saved.updated}, errors ${saved.errors})${tests.length ? ` + ${tests.length} TEST` : ''}`, { list_id: listId, test_list_id: testListId, ...saved, tests: testSaved });
+  await ctx.step('tool', 'save_leads', `Saved ${top.length} prospects to graph8 list ${listId} via ${savedVia} (assert created ${saved.created}, updated ${saved.updated}, errors ${saved.errors})${tests.length ? ` + ${tests.length} TEST` : ''}`, { list_id: listId, test_list_id: testListId, ...saved, tests: testSaved });
 
   // 5. Supabase mirror
   const rows = top.map((p, i) => {
@@ -315,7 +348,13 @@ async function run(ctx: RunCtx): Promise<string> {
   const testLeadIds = ids.slice(rows.length).map((r) => r.id);
 
   const contacts = [
-    ...top.map((p, i) => ({ lead_id: leadIds[i], workspace_id: ctx.workspaceId, linkedin_url: p.linkedin_url ? `https://www.${p.linkedin_url}` : null })),
+    ...top.map((p, i) => {
+      const mem = members.find((r) => p.linkedin_url && normLinkedin(r.linkedin_url) === p.linkedin_url);
+      return {
+        lead_id: leadIds[i], workspace_id: ctx.workspaceId, linkedin_url: p.linkedin_url ? `https://www.${p.linkedin_url}` : null,
+        email: realEmail(mem?.work_email), phone: realPhone(mem?.mobile_phone) ?? realPhone(mem?.direct_phone),
+      };
+    }),
     ...tests.map((t, i) => ({ lead_id: testLeadIds[i], workspace_id: ctx.workspaceId, email: t.email, phone: realPhone(t.phone), linkedin_url: t.linkedin, email_verified: null })),
   ].filter((c) => c.lead_id);
   if (contacts.length) {
