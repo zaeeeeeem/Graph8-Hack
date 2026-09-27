@@ -6,12 +6,16 @@ services:
     region: singapore
     branch: build
     rootDir: .
-    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm -C server typecheck
+    buildCommand: npm i -g pnpm@11.24.0 && pnpm install --frozen-lockfile && pnpm -C server typecheck
     startCommand: pnpm -C server start
     healthCheckPath: /healthz
     numInstances: 1
     autoDeploy: true
     envVars:
+      - key: NODE_VERSION
+        value: 24.16.0
+      - key: LINKEDIN_SEND_NAMES
+        sync: false
       - key: G8_API_KEY
         sync: false
       - key: G8_BASE_URL
