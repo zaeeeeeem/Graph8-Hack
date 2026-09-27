@@ -1,0 +1,93 @@
+@import "tailwindcss";
+
+:root {
+  --background: #000000;
+  --foreground: #ffffff;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-inter), "Inter", sans-serif;
+  --font-display: var(--font-general-sans), "General Sans", sans-serif;
+
+  --color-fu-orange: #da4e24;
+  --color-fu-rust: #a22904;
+  --color-fu-blue: #0098f3;
+  --color-fu-glow-blue: #1f77f6;
+
+  /* Portal status tokens (docs/portal/03-vocabulary.md): neutral/muted are white alphas. */
+  --color-st-active: #0098f3;
+  --color-st-attention: #ff7a2f;
+  --color-st-success: #34d399;
+  --color-st-danger: #f04438;
+  --color-panel: #0a0a0c;
+  --font-mono: var(--font-jetbrains-mono), ui-monospace, SFMono-Regular, monospace;
+
+  --breakpoint-fu-tablet: 810px;
+  --breakpoint-fu-desktop: 1200px;
+
+  --animate-fu-blink: fu-blink 0.8s infinite;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+}
+
+@keyframes fu-blink {
+  0% { opacity: 1; }
+  to { opacity: 0; }
+}
+
+@keyframes fu-streak-drift {
+  0%, 100% { transform: translate3d(0, 0, 0); opacity: 0.85; }
+  50% { transform: translate3d(-40px, 30px, 0); opacity: 1; }
+}
+
+/* React Flow canvas, dark + transparent so the panel background shows through. */
+.portal-flow {
+  --xy-background-color: transparent;
+  --xy-edge-stroke-default: rgba(255, 255, 255, 0.16);
+}
+.portal-flow .react-flow__pane { cursor: grab; }
+.portal-flow .react-flow__pane.dragging { cursor: grabbing; }
+.portal-flow .react-flow__node { cursor: default; }
+.portal-flow .react-flow__edge-path { transition: stroke 400ms ease; }
+.portal-flow .react-flow__node { transition: filter 300ms ease; }
+.portal-flow .react-flow__node.dragging { filter: drop-shadow(0 24px 40px rgba(0, 0, 0, 0.6)); cursor: grabbing; }
+
+/* Thin, quiet scrollbar for scrolling panels inside cards. */
+.portal-thin-scroll { scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, 0.14) transparent; }
+.portal-thin-scroll::-webkit-scrollbar { width: 6px; }
+.portal-thin-scroll::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.14); border-radius: 999px; }
+.portal-thin-scroll::-webkit-scrollbar-track { background: transparent; }
+
+/* Rotating conic border (same technique as the landing FeatureGrid cards). */
+@keyframes portal-spin { to { transform: rotate(360deg); } }
+.portal-spin { animation: portal-spin 4s linear infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  .portal-spin { animation: none; }
+}
+
+@layer components {
+  .fu-type {
+    font-feature-settings: "blwf" on, "cv09" on, "cv03" on, "cv04" on, "cv11" on;
+  }
+
+  /* Placeholder for the licensed background video: diagonal blue/orange light streaks. */
+  .fu-streaks {
+    background:
+      linear-gradient(125deg, transparent 47%, #1f77f6aa 49.2%, #9fd0ff 49.6%, #1f77f6aa 50%, transparent 52.5%),
+      linear-gradient(125deg, transparent 55%, #1f77f666 57%, #cfe6ff 57.3%, #1f77f666 57.7%, transparent 60%),
+      linear-gradient(125deg, transparent 63%, #ff8a3d55 64.6%, #ffc28a 64.8%, #ff8a3d55 65.1%, transparent 66.5%),
+      linear-gradient(125deg, transparent 68%, #1f77f655 70%, #8cc4ff 70.25%, #1f77f655 70.6%, transparent 73%),
+      radial-gradient(60% 55% at 85% 75%, #1f5fd899 0%, #12348000 70%);
+    filter: blur(0.5px);
+    animation: fu-streak-drift 14s ease-in-out infinite;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .fu-streaks { animation: none; }
+  }
+}
