@@ -326,6 +326,12 @@ export const usman: AgentBrain = {
   role: 'sdr',
 
   async run(ctx) {
+    if (ctx.task.kind === 'launch_sequence') {
+      // Usman already asks for Launch at the end of build_sequence; never build a second sequence for the same run.
+      const { data } = await store.db.from('sequences').select('id, name').eq('workspace_id', ctx.workspaceId)
+        .eq('status', 'pending_approval').limit(1);
+      if (data?.[0]) return `Launch card for ${data[0].name} is already waiting in #sales-hq`;
+    }
     if (ctx.task.kind === 'build_sequence' || ctx.task.kind === 'launch_sequence') return buildSequence(ctx);
     ctx.log.warn('usman: unsupported task kind', { kind: ctx.task.kind });
     return `Usman does not handle ${ctx.task.kind}`;
