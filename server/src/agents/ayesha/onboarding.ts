@@ -68,7 +68,8 @@ const TARGET_SYSTEM = 'You are Ayesha, Head of Sales. Crisp, numbers first. Pick
 
 export async function pickTarget(ctx: RunCtx, domain: string, docs: G8Doc[]): Promise<TargetPick> {
   const text = docs.length ? docsForPrompt(docs) : `(no company docs yet; only the website domain ${domain} is known)`;
-  const prompt = `Company website: ${domain}\n\nCompany docs from graph8:\n${text}\n\nReturn the target pick as JSON.`;
+  const prompt = `Company website: ${domain}\n\nCompany docs from graph8:\n${text}\n\nReturn ONLY this JSON object:
+{"company": string, "offer": string (one sentence), "target_persona": string, "target_icp": string (one line), "why": string (one line), "alternatives": string[] (max 2), "geo": string[], "tone": string, "proof": string[] (max 4), "personas": string[] (max 5)}`;
   const r = await llm.json(prompt, TargetPick, { agentId: ctx.agentId, workspaceId: ctx.workspaceId, taskId: ctx.task.id, system: TARGET_SYSTEM, temperature: 0.2 });
   return { ...r, alternatives: r.alternatives ?? [], geo: r.geo ?? [], tone: r.tone ?? '', proof: r.proof ?? [], personas: r.personas ?? [] };
 }
