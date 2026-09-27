@@ -206,24 +206,15 @@ export const slackThread = (channel: string | null, ts: string | null) =>
 export const slackChannel = (channel: string | null) => channel ? `https://slack.com/archives/${channel}` : null;
 
 const G8 = process.env.NEXT_PUBLIC_G8_APP_URL ?? 'https://app.graph8.com';
-// See docs/graph8-app-links.md. LIST pages are verified in the browser. RECORD patterns are
-// UNVERIFIED (org had no rows yet) — so each builder falls back to the verified list page until
-// RECORD_VERIFIED is flipped. Judges must always land on a real graph8 page.
-const RECORD_VERIFIED = { contact: false, deal: false, sequence: false, meeting: false };
-const LIST = {
-  contacts:  `${G8}/contacts`,                    // verified
-  deals:     `${G8}/deals/pipeline`,              // verified (kanban)
-  sequences: `${G8}/sequencer`,                   // verified (NOT /sequences)
-  meetings:  `${G8}/appointments?tab=bookings`,   // verified (NOT /meetings)
-  settings:  `${G8}/studio/settings`,             // verified (connections live under tabs here)
-};
-export const g8Contact  = (id: string | null) => !id ? null : RECORD_VERIFIED.contact  ? `${G8}/contacts/${id}`  : LIST.contacts;
-export const g8Deal     = (id: string | null) => !id ? null : RECORD_VERIFIED.deal     ? `${G8}/deals/${id}`     : LIST.deals;
-export const g8Sequence = (id: string | null) => !id ? null : RECORD_VERIFIED.sequence ? `${G8}/sequencer/${id}` : LIST.sequences;
-export const g8Meeting  = (id: string | null) => !id ? null : RECORD_VERIFIED.meeting  ? `${G8}/appointments/${id}` : LIST.meetings;
-export const g8Settings = () => LIST.settings;
+// Verified on real records (27 Sep, live org). Meetings have no per-record page: use the bookings list.
+export const g8Contact  = (id: string | number | null) => id ? `${G8}/contacts/${id}` : null;
+export const g8Deal     = (id: string | number | null) => id ? `${G8}/deals/${id}` : null;
+export const g8Sequence = (id: string | null) => id ? `${G8}/sequencer/sequence/${id}` : null;   // NOT /sequences, NOT /sequencer/{id}
+export const g8Meeting  = (id: string | null) => id ? `${G8}/appointments?tab=bookings` : null;
+export const g8Deals    = () => `${G8}/deals/pipeline`;
+export const g8Settings = () => `${G8}/studio/settings`;
 ```
-We will send the record patterns once real rows exist (after the first live run); flipping `RECORD_VERIFIED` is the only change.
+Record patterns are verified; no placeholders left.
 
 | Object | Link label | Source columns | Hide when |
 |---|---|---|---|
@@ -237,7 +228,13 @@ We will send the record patterns once real rows exist (after the first live run)
 
 All links open in a new tab. Never render a disabled link; hide it.
 
-## 6. SQL snippets to make the seeded workspace move (we run these for you in the SQL editor — anon cannot write)
+## 6. SQL snippets (OBSOLETE since 12:00 — do not run)
+
+> The demo workspace now holds **live data** from the real server (fake seed wiped). Do **not** run these snippets
+> or `supabase/seed.sql` against it: that would overwrite the live run. To see things move, watch Slack: every
+> agent action writes to Supabase within ~1 s. Kept below only as a reference for the row shapes.
+
+### Original snippets (reference only)
 
 ```sql
 -- Bilal starts working on T-10 (card should pulse green, current task appears)

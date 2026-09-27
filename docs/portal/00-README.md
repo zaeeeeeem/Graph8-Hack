@@ -72,7 +72,12 @@ Never cut: live org-chart canvas with pan/zoom/fit, needs-you banner, today stri
   `NEXT_PUBLIC_WORKSPACE_ID` (default `a0000000-0000-4000-8000-000000000001`),
   `NEXT_PUBLIC_G8_APP_URL` (default `https://app.graph8.com`). Never the service-role key.
 
-## 5. Setup and developing before our server exists
+## 5. Setup
+
+> **Update 15:40:** the server is live and the demo workspace holds real data (see HANDOFF-NOTE). The text below
+> about the fake seed is historical — never re-run `seed.sql`. Between rehearsals the workspace is reset to empty.
+
+### Original notes (before the server existed)
 
 You never need our server. The database is fully seeded with a realistic fake day (`supabase/seed.sql`):
 5 agents, 10 tasks (one blocked on an approval), 8 leads across every stage, 32 timeline events, 10

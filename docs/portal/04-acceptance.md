@@ -60,5 +60,5 @@ Before the demo we run `supabase/seed.sql` to reset, then the server pre-warms. 
 (drawer for a deleted task → close it; agent map miss → "Team").
 
 ## D. Hand-back
-- Code in `office/` in this repo on a branch `portal` (PR to `graph8-hackathon`), `office/README.md` with `pnpm dev`, Vercel URL, and the env names above.
+- Code in `office/` in this repo on branch `frontend` (PR to `main`), `office/README.md` with `pnpm dev`, Vercel URL, and the env names above.
 - A 20-second screen recording of the Office screen reacting to snippet 1 (we keep it as backup for the pitch).
