@@ -15,7 +15,7 @@ const LINKS = [
 ];
 
 // Placeholder for the reference's glass-sphere logo image.
-function LogoOrb({ size }: { size: number }) {
+export function LogoOrb({ size }: { size: number }) {
   return (
     <span
       aria-hidden="true"
@@ -32,7 +32,7 @@ function LogoOrb({ size }: { size: number }) {
   );
 }
 
-function Brand({ phone }: { phone?: boolean }) {
+export function Brand({ phone }: { phone?: boolean }) {
   return (
     <Link href="/" className={`relative flex w-min flex-row items-center justify-start ${phone ? "gap-2" : "gap-3"} no-underline`}>
       <LogoOrb size={phone ? 36 : 40} />

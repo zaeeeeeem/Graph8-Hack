@@ -1,4 +1,6 @@
 import { AIPoweredSection } from "@/components/fusion/AIPoweredSection";
+import { CTAFooter } from "@/components/fusion/CTAFooter";
+import { FaqSection } from "@/components/fusion/FaqSection";
 import { FeatureGrid } from "@/components/fusion/FeatureGrid";
 import { FusionHero } from "@/components/fusion/FusionHero";
 import { FusionNav } from "@/components/fusion/FusionNav";
@@ -14,6 +16,8 @@ export default function Home() {
       <AIPoweredSection />
       <StackedFeatures />
       <IntegrationsSection />
+      <FaqSection />
+      <CTAFooter />
     </div>
   );
 }

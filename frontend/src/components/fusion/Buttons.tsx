@@ -31,17 +31,20 @@ export function GlowButton({
   children,
   size = "default",
   className = "",
+  external = false,
 }: {
   href: string;
   children: string;
   size?: "default" | "small";
   className?: string;
+  external?: boolean;
 }) {
   const small = size === "small";
   const radius = small ? "rounded-[8px]" : "rounded-[12px]";
   return (
     <motion.a
       href={href}
+      {...(external ? { target: "_blank", rel: "noreferrer" } : {})}
       initial="rest"
       animate="rest"
       whileHover="hover"

@@ -16,6 +16,14 @@
   --color-fu-blue: #0098f3;
   --color-fu-glow-blue: #1f77f6;
 
+  /* Portal status tokens (docs/portal/03-vocabulary.md): neutral/muted are white alphas. */
+  --color-st-active: #0098f3;
+  --color-st-attention: #ff7a2f;
+  --color-st-success: #34d399;
+  --color-st-danger: #f04438;
+  --color-panel: #0a0a0c;
+  --font-mono: var(--font-jetbrains-mono), ui-monospace, SFMono-Regular, monospace;
+
   --breakpoint-fu-tablet: 810px;
   --breakpoint-fu-desktop: 1200px;
 
@@ -35,6 +43,32 @@ body {
 @keyframes fu-streak-drift {
   0%, 100% { transform: translate3d(0, 0, 0); opacity: 0.85; }
   50% { transform: translate3d(-40px, 30px, 0); opacity: 1; }
+}
+
+/* React Flow canvas, dark + transparent so the panel background shows through. */
+.portal-flow {
+  --xy-background-color: transparent;
+  --xy-edge-stroke-default: rgba(255, 255, 255, 0.16);
+}
+.portal-flow .react-flow__pane { cursor: grab; }
+.portal-flow .react-flow__pane.dragging { cursor: grabbing; }
+.portal-flow .react-flow__node { cursor: default; }
+.portal-flow .react-flow__edge-path { transition: stroke 400ms ease; }
+.portal-flow .react-flow__node { transition: filter 300ms ease; }
+.portal-flow .react-flow__node.dragging { filter: drop-shadow(0 24px 40px rgba(0, 0, 0, 0.6)); cursor: grabbing; }
+
+/* Thin, quiet scrollbar for scrolling panels inside cards. */
+.portal-thin-scroll { scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, 0.14) transparent; }
+.portal-thin-scroll::-webkit-scrollbar { width: 6px; }
+.portal-thin-scroll::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.14); border-radius: 999px; }
+.portal-thin-scroll::-webkit-scrollbar-track { background: transparent; }
+
+/* Rotating conic border (same technique as the landing FeatureGrid cards). */
+@keyframes portal-spin { to { transform: rotate(360deg); } }
+.portal-spin { animation: portal-spin 4s linear infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  .portal-spin { animation: none; }
 }
 
 @layer components {
