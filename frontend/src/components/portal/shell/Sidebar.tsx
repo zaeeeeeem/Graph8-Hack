@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { motion } from "motion/react";
-import { FileText, Inbox, LayoutGrid, LogOut, PanelLeft, Sparkles, Workflow, X } from "lucide-react";
+import { FileText, Inbox, LayoutGrid, LogOut, Mic, PanelLeft, Sparkles, Workflow, X } from "lucide-react";
 import type { ComponentType } from "react";
 import { useAuth } from "@/components/auth/AuthProvider";
 import { LogoOrb } from "@/components/fusion/FusionNav";
@@ -31,6 +31,7 @@ const NAV: NavItem[] = [
   { label: "Pipeline", href: "/office/pipeline", icon: Workflow, ready: true },
   { label: "Reports", href: "/office/reports", icon: FileText, ready: true },
   { label: "Needs you", href: "/office/needs-you", icon: Inbox, ready: true, countKey: "needsYou" },
+  { label: "Voice", href: "/office/voice", icon: Mic, ready: true },
 ];
 
 export const SIDEBAR_W = 272;
