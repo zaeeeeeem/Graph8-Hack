@@ -81,6 +81,12 @@ export async function startAnalysis(domain: string): Promise<JsonObject> {
   return (unwrap<JsonObject>(r) ?? {}) as JsonObject;
 }
 
+/** Poll fallback for the completion webhook. Verified: GET /intelligence/status/{task_id} → { status: 'pending'|…|'completed', progress }. */
+export async function analysisStatus(g8TaskId: string): Promise<{ status: string; progress: number }> {
+  const r = unwrap<any>(await withTimeout(g8.get(`/intelligence/status/${g8TaskId}`), G8_TIMEOUT_MS, 'intelligence/status')) ?? {};
+  return { status: String(r.status ?? 'unknown'), progress: Number(r.progress ?? 0) };
+}
+
 // ---------------------------------------------------------------------------
 // T3 find_pipeline · T16 meeting type · T4 channels · T5 credits
 // ---------------------------------------------------------------------------
@@ -175,11 +181,11 @@ export async function runOnboarding(ctx: RunCtx): Promise<string> {
   let docs: G8Doc[] = [];
   try { docs = await readCompanyDocs(); } catch (e) { ctx.log.warn('read docs failed', { err: errMsg(e) }); }
   await ctx.step('tool', 'read_company_brain', `${docs.length} company docs`);
-  if (!docs.length) {
+  if (!docs.length && !input.resumed) {
     try {
       const a = await startAnalysis(domain);
       await ctx.step('tool', 'start_company_analysis', 'graph8 analysis started', { status: (a.status as any) ?? null });
-      await store.patchSettings(ctx.workspaceId, { pending_analysis: { domain, task_id: ctx.task.id, started_at: new Date().toISOString() } } as Partial<WorkspaceSettings>);
+      await store.patchSettings(ctx.workspaceId, { pending_analysis: { domain, task_id: ctx.task.id, g8_task_id: (a.task_id as string) ?? null, started_at: new Date().toISOString() } } as Partial<WorkspaceSettings>);
       await cl.set('brain', 'paused', 'studying the site, ~30 min');
       await say(studyingText(domain));
       return `Waiting for graph8 analysis of ${domain}`;
@@ -187,6 +193,8 @@ export async function runOnboarding(ctx: RunCtx): Promise<string> {
       await cl.set('brain', 'warn', "couldn't study the site, using what graph8 knows");
       await ctx.step('tool', 'start_company_analysis', `failed: ${errMsg(e)}`);
     }
+  } else if (!docs.length) {
+    await cl.set('brain', 'warn', 'no company docs yet, using what graph8 knows');
   } else {
     await cl.set('brain', 'done', `${docs.length} docs`);
   }

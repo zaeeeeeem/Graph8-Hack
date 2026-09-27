@@ -16,7 +16,7 @@ import { store } from '../lib/store';
 import { runtime } from './runtime';
 import { G8_LINKS } from './ayesha/kit';
 import { runChat } from './ayesha/chat';
-import { runOnboarding } from './ayesha/onboarding';
+import { analysisStatus, runOnboarding } from './ayesha/onboarding';
 import { runStandup } from './ayesha/standup';
 import { errMsg, normDomain } from './ayesha/util';
 import { PLAN_START_ACTIONS, planCard } from '../slack/cards/plan';
@@ -62,7 +62,12 @@ export const ayesha: AgentBrain = {
   role: ROLE,
   async run(ctx) {
     switch (ctx.task.kind) {
-      case 'onboard': return runOnboarding(ctx);
+      case 'onboard': {
+        const out = await runOnboarding(ctx);
+        const pending = (await store.settings(ctx.workspaceId).catch(() => ctx.settings)).pending_analysis as { g8_task_id?: string } | null | undefined;
+        if (pending?.g8_task_id) watchAnalysis(ctx.workspaceId, pending.g8_task_id);
+        return out;
+      }
       case 'plan': return runDailyRun(ctx);
       case 'standup': return runStandupTask(ctx);
       case 'answer_question':
@@ -114,6 +119,25 @@ export async function resumeAfterAnalysis(workspaceId: UUID, _payload: JsonObjec
     await runtime.enqueue(workspaceId, ROLE, 'onboard', `Hire sales team for ${pending.domain} (analysis done)`, { domain: pending.domain, resumed: true }, { parentTaskId: pending.task_id, priority: 0 });
     return true;
   } finally { resuming.delete(workspaceId); }
+}
+
+/** Webhook may never arrive (tunnel down): poll graph8 every minute for up to 45 min, then resume either way. */
+export function watchAnalysis(workspaceId: UUID, g8TaskId: string, everyMs = 60_000, maxTries = 45): void {
+  let tries = 0;
+  const timer = setInterval(async () => {
+    tries++;
+    try {
+      const st = await analysisStatus(g8TaskId);
+      const done = ['completed', 'failed', 'error'].includes(st.status);
+      if (!done && tries < maxTries) return;
+      clearInterval(timer);
+      await resumeAfterAnalysis(workspaceId, { g8_task_id: g8TaskId, status: st.status });
+    } catch (e) {
+      if (tries >= maxTries) { clearInterval(timer); await resumeAfterAnalysis(workspaceId, {}).catch(() => undefined); }
+      rootLog.warn('analysis poll failed', { err: errMsg(e) });
+    }
+  }, everyMs);
+  timer.unref?.();
 }
 
 // ---------------------------------------------------------------------------
