@@ -9,7 +9,7 @@ import { g8 } from '../lib/g8';
 import { store } from '../lib/store';
 import { voiceLine } from '../lib/voice';
 import { listCard, type ListCardRow } from '../slack/cards/list';
-import { describeWidened, personaToPlan, toFilters, widen, type SearchFilter, type SearchPlan } from './bilal/filters';
+import { applyExplicit, describeWidened, personaToPlan, toFilters, widen, type ExplicitFilters, type SearchFilter, type SearchPlan } from './bilal/filters';
 import { prospectKey, rank, score, toProspect, type Prospect } from './bilal/score';
 import {
   asArray, collectHandles, eachLayer, errMsg, g8ContactUrl, normDomain, normLinkedin, openProgress, pool, realEmail, realPhone,
@@ -188,7 +188,7 @@ function splitName(label: string): { first: string; last: string } {
 // ---------------------------------------------------------------------------
 // Playbook
 // ---------------------------------------------------------------------------
-export interface BilalInput { persona?: string; target_persona?: string | null; count?: number; research_count?: number; geo?: string[]; icp?: string; target_icp?: string | null }
+export interface BilalInput { persona?: string; target_persona?: string | null; count?: number; research_count?: number; geo?: string[]; icp?: string; target_icp?: string | null; /** Founder constraints from chat; override the mapping. */ filters?: ExplicitFilters | null; label?: string | null }
 
 /**
  * runtime: ctx.delegate() blocks this task on Hira's and re-runs us with task.output.last_child when she finishes.
@@ -222,8 +222,10 @@ async function run(ctx: RunCtx): Promise<string> {
 
   // 1. persona → filters
   const { plan, via, note } = await personaToPlan(ctx, persona, { icp: input.icp ?? input.target_icp ?? ctx.settings.target_icp, geo });
-  await ctx.step('llm', 'persona_to_filters', `Mapped persona via ${via}: ${plan.label}`, { plan: planJson(plan) });
-  await pr.set('target', via === 'gemini' ? 'done' : 'warn', via === 'gemini' ? plan.label : `keyword fallback (${note ?? 'no LLM'})`);
+  const explicit = applyExplicit(plan, input.filters);
+  if (input.label) plan.label = String(input.label).slice(0, 60);
+  await ctx.step('llm', 'persona_to_filters', `Mapped persona via ${via}: ${plan.label}${explicit.length ? ` · founder filters: ${explicit.join('; ')}` : ''}`, { plan: planJson(plan) });
+  await pr.set('target', via === 'gemini' || explicit.length ? 'done' : 'warn', via === 'gemini' || explicit.length ? `${plan.label}${explicit.length ? ` (${explicit.join('; ')})` : ''}`.slice(0, 200) : `keyword fallback (${note ?? 'no LLM'})`);
 
   // 2. S1 intent (layers) — company-first for those domains
   await pr.set('signals', 'doing');
@@ -394,8 +396,9 @@ async function run(ctx: RunCtx): Promise<string> {
     listName, rows: cardRows, strong, widened: widenedTxt || undefined,
     signalsNote: intent.byDomain.size ? `${top.filter((p) => p.signals.length).length} with buying signals` : undefined,
   });
-  await pr.post(card.text, card.blocks);
-  await pr.post(await doneLine);
+  // One message per step: the voice line leads the card (template text only when the voice line failed).
+  const line = await doneLine;
+  await pr.post(line, [{ type: 'section', text: { type: 'mrkdwn', text: line } }, ...card.blocks]);
 
   const handoffTop = leadIds.slice(0, handoffN);
   const backfill = leadIds.slice(handoffN);
@@ -414,7 +417,7 @@ async function run(ctx: RunCtx): Promise<string> {
 }
 
 function planJson(p: SearchPlan): JsonObject {
-  return { label: p.label, titles: p.titles, adjacent_titles: p.adjacentTitles, seniority: p.seniority, industries: p.industries, sizes: p.sizes, countries: p.countries, nearby_countries: p.nearbyCountries };
+  return { label: p.label, titles: p.titles, adjacent_titles: p.adjacentTitles, seniority: p.seniority, industries: p.industries, sizes: p.sizes, countries: p.countries, nearby_countries: p.nearbyCountries, domains: p.domains ?? [] };
 }
 
 export const bilal: AgentBrain = { role: 'scout', run };
