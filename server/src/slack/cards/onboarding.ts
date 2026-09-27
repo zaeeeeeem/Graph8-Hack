@@ -3,14 +3,14 @@ import { actions, context, officeUrl, section } from '../../agents/ayesha/kit';
 
 /** Keys used on the onboarding live checklist (P1). Layer extras append `extra.<name>`. */
 export const ONBOARD_ITEMS: ChecklistItem[] = [
-  { key: 'brain', label: 'Read company brain in graph8', state: 'todo' },
-  { key: 'target', label: 'Pick target persona', state: 'todo' },
-  { key: 'channels', label: 'Check channels (email · phone · LinkedIn)', state: 'todo' },
-  { key: 'pipeline', label: 'Find Sales Pipeline + New Meeting stage', state: 'todo' },
-  { key: 'meeting', label: 'Discovery call meeting type', state: 'todo' },
-  { key: 'credits', label: 'Check graph8 credits', state: 'todo' },
+  { key: 'brain', label: 'Company docs', state: 'todo' },
+  { key: 'target', label: 'Target', state: 'todo' },
+  { key: 'channels', label: 'Channels', state: 'todo' },
+  { key: 'pipeline', label: 'Deal pipeline', state: 'todo' },
+  { key: 'meeting', label: 'Meeting type', state: 'todo' },
+  { key: 'credits', label: 'graph8 credits', state: 'todo' },
 ];
-export const PLAN_ITEM: ChecklistItem = { key: 'plan', label: 'Plan ready in #sales-hq', state: 'todo' };
+export const PLAN_ITEM: ChecklistItem = { key: 'plan', label: 'Plan', state: 'todo' };
 
 export function onboardTitle(domain: string): string {
   return `Setting up your sales team for ${domain}`;

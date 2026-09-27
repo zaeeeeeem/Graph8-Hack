@@ -185,12 +185,16 @@ async function onAction(e: BusEvents['slack.action']): Promise<void> {
   await store.patchSettings(ws, { plan_started_task: e.value });
   if (e.ctx.messageTs) {
     // Flip the plan card to "started" (removes [Start]); best-effort from saved settings.
-    const brain = (await store.workspace(ws).catch(() => null))?.sales_brain ?? {};
+    const row = await store.workspace(ws).catch(() => null);
     const card = planCard({
-      company: String(brain.company ?? 'your company'), target: s.target_persona ?? '', why: '', alternatives: [],
+      company: String(s.plan_company ?? row?.sales_brain?.company ?? row?.company_domain ?? 'your company'),
+      target: s.target_persona ?? '', why: String(s.plan_why ?? ''),
+      alternatives: Array.isArray(s.plan_alternatives) ? (s.plan_alternatives as string[]) : [],
       dailyFind: s.daily_find, dailyResearch: s.daily_research,
       channels: { email: s.channels?.email ?? true, phone: s.channels?.phone ?? false, linkedin: s.channels?.linkedin ?? false },
-      extras: [], standupHour: 9, taskId: e.value, started: true,
+      extras: Array.isArray(s.plan_extras) ? (s.plan_extras as string[]) : [],
+      credits: typeof s.plan_credits === 'number' ? s.plan_credits : undefined,
+      standupHour: row?.standup_hour ?? 9, taskId: e.value, started: true,
     });
     await slack.update(e.ctx.channel, e.ctx.messageTs, card).catch(() => undefined);
   }

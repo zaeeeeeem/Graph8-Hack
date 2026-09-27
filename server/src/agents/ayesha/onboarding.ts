@@ -69,9 +69,37 @@ const TARGET_SYSTEM = 'You are Ayesha, Head of Sales. Crisp, numbers first. Pick
 export async function pickTarget(ctx: RunCtx, domain: string, docs: G8Doc[]): Promise<TargetPick> {
   const text = docs.length ? docsForPrompt(docs) : `(no company docs yet; only the website domain ${domain} is known)`;
   const prompt = `Company website: ${domain}\n\nCompany docs from graph8:\n${text}\n\nReturn ONLY this JSON object:
-{"company": string, "offer": string (one sentence), "target_persona": string, "target_icp": string (one line), "why": string (one line), "alternatives": string[] (max 2), "geo": string[], "tone": string, "proof": string[] (max 4), "personas": string[] (max 5)}`;
+{"company": string, "offer": string (one sentence), "target_persona": string, "target_icp": string (one line), "why": string (ONE sentence, max 25 words, never empty, citing a concrete fact from the docs), "alternatives": string[] (max 2), "geo": string[], "tone": string, "proof": string[] (max 4), "personas": string[] (max 5)}`;
   const r = await llm.json(prompt, TargetPick, { agentId: ctx.agentId, workspaceId: ctx.workspaceId, taskId: ctx.task.id, system: TARGET_SYSTEM, temperature: 0.2 });
-  return { ...r, alternatives: r.alternatives ?? [], geo: r.geo ?? [], tone: r.tone ?? '', proof: r.proof ?? [], personas: r.personas ?? [] };
+  return { ...r, why: whyLine(r.why, r.target_persona, r.target_icp), alternatives: r.alternatives ?? [], geo: r.geo ?? [], tone: r.tone ?? '', proof: r.proof ?? [], personas: r.personas ?? [] };
+}
+
+/** One non-empty sentence (max ~160 chars); falls back to a sentence built from target + ICP. */
+export function whyLine(why: string | undefined | null, persona: string, icp: string): string {
+  const first = (why ?? '').replace(/\s+/g, ' ').trim().split(/(?<=[.!?])\s/)[0] ?? '';
+  if (first.length >= 12) return first.length > 160 ? `${first.slice(0, 157).trimEnd()}…` : first;
+  const who = persona || 'This buyer';
+  return icp ? `${who} at ${icp.replace(/[.\s]+$/, '')} feel the pain in your docs most and can say yes fastest.` : `${who} feel the pain in your docs most and can say yes fastest.`;
+}
+
+/** Keep checklist notes to one short line. */
+export const short = (s: string, n = 60) => (s.length > n ? `${s.slice(0, n - 1).trimEnd()}…` : s);
+
+/**
+ * Display name: graph8 company profile ("8x Social, Inc." → "8x Social"), else the model's name when it isn't a
+ * truncated token of the domain, else the domain. Never "8x" for 8x.social.
+ */
+export async function companyName(domain: string, modelName?: string): Promise<string> {
+  try {
+    const p = unwrap<any>(await withTimeout(g8.get('/company-profile'), G8_TIMEOUT_MS, 'company-profile'));
+    const raw = String(p?.profile?.fields?.company_name?.value ?? '').trim();
+    const clean = raw.replace(/,?\s+(inc|llc|ltd|limited|gmbh|corp|corporation|co|pvt)\.?$/i, '').trim();
+    if (clean.length >= 3) return clean;
+  } catch { /* fall through */ }
+  const m = (modelName ?? '').trim();
+  const stem = domain.split('.')[0] ?? '';
+  if (m.length > stem.length + 1 && !domain.startsWith(m.toLowerCase())) return m;
+  return domain;
 }
 
 // ---------------------------------------------------------------------------
@@ -218,12 +246,13 @@ export async function runOnboarding(ctx: RunCtx): Promise<string> {
   let pick: TargetPick;
   try {
     pick = await pickTarget(ctx, domain, docs);
-    await cl.set('target', 'done', pick.target_persona);
+    await cl.set('target', 'done', short(pick.target_persona));
   } catch (e) {
-    pick = { company: ws.name || domain, offer: '', target_persona: 'Founders and Heads of Sales at B2B SaaS companies', target_icp: 'B2B SaaS, 11-200 employees', why: 'Safe default while I read more about you', alternatives: [], geo: [], tone: '', proof: [], personas: [] };
+    pick = { company: ws.name || domain, offer: '', target_persona: 'Founders and Heads of Sales at B2B SaaS companies', target_icp: 'B2B SaaS, 11-200 employees', why: 'Safe default while I learn more about you.', alternatives: [], geo: [], tone: '', proof: [], personas: [] };
     await cl.set('target', 'warn', 'default target (AI unavailable)');
     await ctx.step('llm', 'pick_target', `failed: ${errMsg(e)}`);
   }
+  pick.company = await companyName(domain, pick.company);
   const brain: SalesBrain = { company: pick.company, offer: pick.offer, icp: pick.target_icp, personas: pick.personas, tone: pick.tone, proof: pick.proof, sources: docs.map((d) => d.file_type) };
   try { await store.db.from('workspaces').update({ sales_brain: brain, company_domain: domain }).eq('id', ctx.workspaceId); } catch (e) { ctx.log.warn('save brain failed', { err: errMsg(e) }); }
 
@@ -233,7 +262,7 @@ export async function runOnboarding(ctx: RunCtx): Promise<string> {
   try {
     ch = await checkChannels();
     const miss = [!ch.email.ok && 'email', !ch.phone.ok && 'phone', !ch.linkedin.ok && 'LinkedIn'].filter(Boolean);
-    await cl.set('channels', miss.length ? 'warn' : 'done', miss.length ? `${miss.join(', ')} not connected, starting with what works` : 'email · phone · LinkedIn');
+    await cl.set('channels', miss.length ? 'warn' : 'done', miss.length ? `${miss.join(', ')} not connected` : 'all connected');
     await ctx.step('tool', 'check_channels', `email ${ch.email.ok}, phone ${ch.phone.ok}, linkedin ${ch.linkedin.ok}`);
     if (!ch.linkedin.ok) await postConnect(ctx, 'linkedin').catch((e) => ctx.log.warn('connect card failed', { err: errMsg(e) }));
     if (!ch.email.ok) await postConnect(ctx, 'mailbox').catch((e) => ctx.log.warn('connect card failed', { err: errMsg(e) }));
@@ -263,9 +292,9 @@ export async function runOnboarding(ctx: RunCtx): Promise<string> {
       patch.g8_event_type_id = m.id;
       const url = await bookingUrl(m).catch((e) => { ctx.log.warn('booking url failed', { err: errMsg(e) }); return null; });
       if (url) patch.g8_booking_url = url;
-      await cl.set('meeting', 'done', url ? `${m.title} · booking link ready` : m.title);
+      await cl.set('meeting', 'done', url ? `${m.title} + booking link` : m.title);
     }
-    else await cl.set('meeting', 'warn', 'no meeting type, connect Google Calendar in graph8');
+    else await cl.set('meeting', 'warn', 'none, connect Google Calendar');
     await ctx.step('tool', 'setup_meeting_type', m ? m.title : 'none', { eventTypeId: m?.id ?? null });
   } catch (e) { await cl.set('meeting', 'warn', errMsg(e)); }
 
@@ -274,7 +303,7 @@ export async function runOnboarding(ctx: RunCtx): Promise<string> {
   let credits: number | undefined;
   try {
     credits = (await checkCredits()).available;
-    await cl.set('credits', credits < LOW_CREDITS ? 'warn' : 'done', `${fmtNum(credits)} available`);
+    await cl.set('credits', credits < LOW_CREDITS ? 'warn' : 'done', fmtNum(credits));
     if (credits < LOW_CREDITS) {
       await slack.postAs(ROLE, 'hq', { text: `⚠️ graph8 credits low: ${fmtNum(credits)} left. Top up in graph8 to keep the team running.` });
       await ctx.report('alert', 'graph8 credits low', `${fmtNum(credits)} credits left in graph8.`, { credits });
@@ -291,7 +320,7 @@ export async function runOnboarding(ctx: RunCtx): Promise<string> {
   await cl.add({ ...PLAN_ITEM, state: 'doing' });
   const settings = await store.settings(ctx.workspaceId).catch(() => ({ ...ctx.settings, ...patch }) as WorkspaceSettings);
   const card = planCard({
-    company: pick.company || domain, target: pick.target_persona, why: pick.why, alternatives: pick.alternatives,
+    company: pick.company, target: pick.target_persona, why: pick.why, alternatives: pick.alternatives,
     dailyFind: settings.daily_find ?? 10, dailyResearch: settings.daily_research ?? 5,
     channels: { email: ch.email.ok, phone: ch.phone.ok, linkedin: ch.linkedin.ok }, extras, credits,
     standupHour: ws.standup_hour ?? 9, taskId: ctx.task.id,
@@ -302,11 +331,15 @@ export async function runOnboarding(ctx: RunCtx): Promise<string> {
     daily_find: settings.daily_find, daily_research: settings.daily_research, slack_ts: planMsg.ts, slack_channel: planMsg.channel,
   });
   try {
-    await store.patchSettings(ctx.workspaceId, { onboarded_at: new Date().toISOString(), plan_slack_ts: planMsg.ts, plan_slack_channel: planMsg.channel, pending_analysis: null } as Partial<WorkspaceSettings>);
+    await store.patchSettings(ctx.workspaceId, {
+      onboarded_at: new Date().toISOString(), plan_slack_ts: planMsg.ts, plan_slack_channel: planMsg.channel, pending_analysis: null,
+      // [Start] re-renders the card from these (it must never lose the company name or the why).
+      plan_company: pick.company, plan_why: pick.why, plan_alternatives: pick.alternatives, plan_extras: extras, plan_credits: credits ?? null,
+    } as Partial<WorkspaceSettings>);
     await store.db.from('workspaces').update({ status: 'active' }).eq('id', ctx.workspaceId);
   } catch (e) { ctx.log.warn('activate workspace failed', { err: errMsg(e) }); }
-  await cl.set('plan', 'done', 'press Start when ready');
-  await cl.title(`Sales team hired for ${domain} ✅`);
+  await cl.set('plan', 'done', 'press Start');
+  await cl.title(`Sales team hired for ${pick.company} ✅`);
   return `Onboarded ${domain}: target ${pick.target_persona}`;
 }
 
@@ -322,11 +355,11 @@ async function runExtras(ctx: RunCtx, cl: Checklist): Promise<string[]> {
     try { await cl.add(item); } catch { /* checklist edit is cosmetic */ }
     try {
       const r = await withTimeout(extra.run(ctx), EXTRA_TIMEOUT_MS, extra.label);
-      await cl.set(key, r.ok ? 'done' : 'warn', r.note);
+      await cl.set(key, r.ok ? 'done' : 'warn', r.note ? short(r.note) : undefined);
       if (r.ok) lines.push(r.note ? `${extra.label}: ${r.note}` : extra.label);
       await ctx.step('tool', extra.name, r.ok ? `ok${r.note ? `: ${r.note}` : ''}` : `not ready: ${r.note ?? ''}`);
     } catch (e) {
-      await cl.set(key, 'warn', `${errMsg(e)}, continuing without it`).catch(() => undefined);
+      await cl.set(key, 'warn', `skipped: ${short(errMsg(e), 50)}`).catch(() => undefined);
       await ctx.step('tool', extra.name, `failed: ${errMsg(e)}`);
       await ctx.report('alert', `${extra.label} unavailable`, `Skipped during onboarding: ${errMsg(e)}`, { layer: layer.name }).catch(() => undefined);
     }
