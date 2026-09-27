@@ -9,8 +9,17 @@
     "skipLibCheck": true,
     "resolveJsonModule": true,
     "allowImportingTsExtensions": false,
-    "types": ["node"],
+    "types": [
+      "node"
+    ],
     "rootDir": ".."
   },
-  "include": ["src/**/*.ts", "../shared/**/*.ts", "../scripts/**/*.ts"]
+  "include": [
+    "src/**/*.ts",
+    "../shared/**/*.ts",
+    "../scripts/**/*.ts"
+  ],
+  "exclude": [
+    "../scripts/verify/**"
+  ]
 }
