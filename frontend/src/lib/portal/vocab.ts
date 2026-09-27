@@ -31,9 +31,11 @@ import {
   Send,
   SlidersHorizontal,
   SquareSlash,
+  StickyNote,
   Trophy,
   UserSearch,
   Webhook,
+  Wrench,
   Zap,
   type LucideIcon,
 } from "lucide-react";
@@ -52,6 +54,7 @@ import type {
   ReplyIntent,
   ReportKind,
   RunStatus,
+  RunStepKind,
   RunTrigger,
   SequenceStatus,
   TaskBlockedOn,
@@ -277,6 +280,14 @@ export const RUN_TRIGGER: Record<RunTrigger, { label: string; icon: LucideIcon }
   approval: { label: "Woke by your decision", icon: CircleCheck },
   system: { label: "Started by the system", icon: Cpu },
   manual: { label: "Started manually", icon: Hand },
+};
+
+/** portal_activity.kind — one step inside a run. */
+export const RUN_STEP_KIND: Record<RunStepKind, { label: string; icon: LucideIcon }> = {
+  tool: { label: "Tool call", icon: Wrench },
+  llm: { label: "Model", icon: Cpu },
+  slack: { label: "Slack", icon: MessageSquare },
+  note: { label: "Note", icon: StickyNote },
 };
 
 export const RUN_STATUS: Record<RunStatus, Entry> = {

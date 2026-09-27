@@ -1,5 +1,5 @@
 // Pure derivations over a PortalSnapshot. Same functions will run on Supabase data later.
-import type { ActivityPoint, CreditLite, PortalSnapshot, RunLite, TaskLite } from "./mock";
+import type { ActivityPoint, CreditLite, PortalSnapshot, RunLite, TaskLite } from "./snapshot";
 import type { PortalAgentRow, PortalNeedsYouRow } from "./types";
 import { PAUSE_REASON } from "./vocab";
 import { taskId } from "./format";
@@ -115,6 +115,39 @@ export function reportsForTask(s: PortalSnapshot, taskId: string) {
 /** Pending decision that points at this task (approvals.task_id or tasks.approval_id). */
 export function decisionForTask(s: PortalSnapshot, task: TaskLite) {
   return s.approvals.find((a) => a.id === task.approval_id || a.task_id === task.id);
+}
+
+const BUCKET_MS = 10 * 60_000;
+const BUCKETS = 12;
+
+/**
+ * Today's running totals in 10-minute buckets over the last two hours, derived from real rows:
+ * leads created (found), lead_events reply_received / meeting_booked / deal_created, credit_events.
+ */
+export function buildActivity(s: Omit<PortalSnapshot, "activity">, dayStart: string, now = Date.now()): ActivityPoint[] {
+  const start = Date.parse(dayStart);
+  const leadAmount = new Map(s.leads.map((l) => [l.id, Number(l.deal_amount ?? 0)]));
+  const times = (list: string[]) => list.map((t) => Date.parse(t)).filter((t) => t >= start);
+  const found = times(s.leads.map((l) => l.created_at));
+  const replies = times(s.leadEvents.filter((e) => e.type === "reply_received").map((e) => e.occurred_at));
+  const meetings = times(s.leadEvents.filter((e) => e.type === "meeting_booked").map((e) => e.occurred_at));
+  const deals = s.leadEvents
+    .filter((e) => e.type === "deal_created" && Date.parse(e.occurred_at) >= start)
+    .map((e) => ({ t: Date.parse(e.occurred_at), v: leadAmount.get(e.lead_id) ?? 0 }));
+  const credits = s.creditEvents.map((c) => ({ t: Date.parse(c.created_at), v: c.credits })).filter((c) => c.t >= start);
+  const upTo = (list: number[], end: number) => list.filter((t) => t <= end).length;
+  const sumTo = (list: { t: number; v: number }[], end: number) => list.reduce((n, x) => (x.t <= end ? n + x.v : n), 0);
+  return Array.from({ length: BUCKETS }, (_, i) => {
+    const end = now - (BUCKETS - 1 - i) * BUCKET_MS;
+    return {
+      t: new Date(end - BUCKET_MS).toISOString(),
+      found: upTo(found, end),
+      replies: upTo(replies, end),
+      meetings: upTo(meetings, end),
+      deals_value: sumTo(deals, end),
+      credits: sumTo(credits, end),
+    };
+  });
 }
 
 /** Today's running totals; the last point always equals portal_today's live numbers. */
@@ -265,3 +298,11 @@ export function runDelegator(s: PortalSnapshot, run: RunLite): PortalAgentRow | 
   const parent = task?.parent_task_id ? s.tasks.find((t) => t.id === task.parent_task_id) : undefined;
   return parent ? byId.get(parent.assignee_agent_id ?? "") : undefined;
 }
+
+// --- activity feed (portal_activity) -----------------------------------------------
+
+/** Steps in reading order (oldest first) for one task or one run. */
+export const stepsForTask = (s: PortalSnapshot, taskId: string) =>
+  s.steps.filter((x) => x.task_id === taskId).sort((a, b) => a.created_at.localeCompare(b.created_at) || a.seq - b.seq);
+export const stepsForRun = (s: PortalSnapshot, runId: string) =>
+  s.steps.filter((x) => x.run_id === runId).sort((a, b) => a.seq - b.seq);

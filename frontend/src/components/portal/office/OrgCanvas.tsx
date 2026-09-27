@@ -18,7 +18,7 @@ import { Maximize, Minus, Plus, RotateCcw } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { onFocusAgent } from "@/lib/portal/hooks";
 import { slackChannel, slackThread } from "@/lib/portal/links";
-import type { PortalSnapshot } from "@/lib/portal/mock";
+import type { PortalSnapshot } from "@/lib/portal/snapshot";
 import { FOUNDER_NODE_ID, NODE_H, NODE_W, layoutOrg, needsYouItems, tasksById } from "@/lib/portal/selectors";
 import { TASK_KIND } from "@/lib/portal/vocab";
 import { taskId } from "@/lib/portal/format";

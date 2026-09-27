@@ -2,21 +2,21 @@
 
 import Image from "next/image";
 import { motion, type Transition } from "motion/react";
-import { GlowButton, GradientBadge, OutlineButton } from "./Buttons";
+import { GradientBadge } from "./Buttons";
+import { useRouter } from "next/navigation";
+import { openAuth } from "@/components/auth/AuthModal";
+import { useAuth } from "@/components/auth/AuthProvider";
 import { PromptCard } from "./PromptCard";
 
 // Hotlinked from the reference site's CDN — replace with our own clip before launch.
 const HERO_VIDEO_SRC: string | null = "https://framerusercontent.com/assets/Bax1SXv4b9QI33bMvkicABKnI.mp4";
 
-const HEADLINE_LINES = ["Automate Your AI Workflows", "with AI Agent"];
+const HEADLINE_LINES = ["Life’s too short to waste time", "manually doing sales"];
 const HEADLINE = HEADLINE_LINES.join(" ");
-const DESCRIPTION =
-  "Connect your favorite apps, set triggers and watch AI handle the rest - no coding required. Get up and running in minutes.";
 
 const TEXT_EFFECT_FROM = { opacity: 0.001, filter: "blur(2px)", y: 10 };
 const TEXT_EFFECT_TO = { opacity: 1, filter: "blur(0px)", y: 0 };
 const TEXT_EASE: [number, number, number, number] = [0, 0, 0.58, 1];
-const BUTTON_EASE: [number, number, number, number] = [0.12, 0.23, 0.5, 1];
 const CARD_SPRING: Transition = { type: "spring", stiffness: 80, damping: 30, mass: 1 };
 
 function BlurWords({ lines }: { lines: string[] }) {
@@ -47,10 +47,14 @@ function BlurWords({ lines }: { lines: string[] }) {
   );
 }
 
-const H1 = "fu-type font-display text-[62px] leading-[1.1em] font-medium tracking-normal text-white max-fu-desktop:text-[58px] max-fu-tablet:text-[45px]";
-const LEDE = "fu-type font-sans text-base leading-[26px] font-normal text-white";
+const H1 = "fu-type font-display text-[72px] leading-[1.1em] font-medium tracking-[-0.01em] text-white max-fu-desktop:text-[50px] max-fu-tablet:text-[42px]";
 
 export function FusionHero() {
+  const router = useRouter();
+  const { user } = useAuth();
+  // Typing a prompt is the way in: straight to the dashboard when signed in, otherwise sign in first.
+  const startFromPrompt = () => (user ? router.push("/office") : openAuth("signin", "/office"));
+
   return (
     <header className="relative flex h-min w-full flex-none flex-row items-start justify-center gap-0 overflow-hidden bg-black px-10 pt-[140px] pb-10 max-fu-desktop:px-[30px] max-fu-desktop:pt-[130px] max-fu-tablet:px-4 max-fu-tablet:pt-[150px] max-fu-tablet:pb-[50px]">
       <motion.div
@@ -84,41 +88,8 @@ export function FusionHero() {
               </h1>
               <h1 className={`${H1} relative w-full text-center whitespace-pre-wrap break-words fu-tablet:hidden`}>{HEADLINE}</h1>
             </div>
-            <motion.p
-              className={`${LEDE} relative w-full max-w-[522px] text-left whitespace-pre-wrap break-words max-fu-tablet:hidden`}
-              initial={TEXT_EFFECT_FROM}
-              animate={TEXT_EFFECT_TO}
-              transition={{ duration: 0.3, ease: TEXT_EASE, delay: 0.7 }}
-            >
-              {DESCRIPTION}
-            </motion.p>
-            <p className={`${LEDE} relative w-full text-center whitespace-pre-wrap break-words fu-tablet:hidden`}>{DESCRIPTION}</p>
           </div>
 
-          <div className="relative flex h-min w-full flex-none flex-col items-start justify-start gap-2.5 max-fu-tablet:items-center">
-            <div className="relative flex h-min w-full flex-none flex-row flex-wrap items-center justify-start gap-4 max-fu-tablet:flex-col max-fu-tablet:justify-center">
-              <motion.div
-                className="relative h-auto w-auto flex-none max-fu-tablet:w-full"
-                initial={{ opacity: 0.001, y: 30 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 1, duration: 0.8, ease: BUTTON_EASE }}
-              >
-                <GlowButton href="#" className="max-fu-tablet:w-full">
-                  Get Started - Free
-                </GlowButton>
-              </motion.div>
-              <motion.div
-                className="relative h-auto w-auto flex-none max-fu-tablet:w-full"
-                initial={{ opacity: 0.001, y: 30 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 1.1, duration: 0.8, ease: BUTTON_EASE }}
-              >
-                <OutlineButton href="#" className="max-fu-tablet:w-full">
-                  View Pricing
-                </OutlineButton>
-              </motion.div>
-            </div>
-          </div>
         </div>
 
         <div className="relative z-[1] flex h-min w-full flex-none flex-col items-center justify-center gap-0 overflow-hidden pt-[60px] max-fu-tablet:hidden">
@@ -129,7 +100,7 @@ export function FusionHero() {
             animate={{ opacity: 1, y: 0 }}
             transition={{ ...CARD_SPRING, delay: 0.5 }}
           >
-            <PromptCard />
+            <PromptCard onSubmit={startFromPrompt} />
           </motion.div>
           <motion.div
             className="relative flex h-min w-full flex-none flex-row items-center justify-center gap-2.5 overflow-hidden"
@@ -140,7 +111,7 @@ export function FusionHero() {
             <div className="relative aspect-[2.08054] h-[538px] w-px flex-1 overflow-hidden rounded-[20px] [mask:linear-gradient(#000_0%,#0000_100%)] max-fu-desktop:h-[361px]">
               <Image
                 src="/sidebar.png"
-                alt="Autopilot app preview"
+                alt="Graphi app preview"
                 fill
                 sizes="(min-width: 1200px) 1240px, 810px"
                 className="object-cover object-top-left"

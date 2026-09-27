@@ -7,8 +7,9 @@ import { CircleAlert, CircleX, X } from "lucide-react";
 import { useEffect, type ReactNode } from "react";
 import { int, taskId } from "@/lib/portal/format";
 import { g8Contact, g8Deal, g8Sequence, slackThread } from "@/lib/portal/links";
-import type { LeadLite, PortalSnapshot, SequenceLite, TaskLite } from "@/lib/portal/mock";
-import { agentsById, decisionForTask, reportsForTask, taskByNumber, taskTree, type TaskTreeNode } from "@/lib/portal/selectors";
+import type { LeadLite, PortalSnapshot, SequenceLite, TaskLite } from "@/lib/portal/snapshot";
+import { agentsById, decisionForTask, reportsForTask, stepsForTask, taskByNumber, taskTree, type TaskTreeNode } from "@/lib/portal/selectors";
+import { StepList } from "../ui/StepList";
 import { usePortal } from "@/lib/portal/store";
 import { closeTask, openLead, openTask } from "@/lib/portal/taskNav";
 import type { PortalAgentRow, ReportRow } from "@/lib/portal/types";
@@ -63,6 +64,7 @@ function DrawerBody({ data, task }: { data: PortalSnapshot; task: TaskLite }) {
   const st = TASK_STATUS[task.status];
   const decision = decisionForTask(data, task);
   const reports = reportsForTask(data, task.id);
+  const steps = stepsForTask(data, task.id);
   const tree = taskTree(data, task);
   const lead = task.lead_id ? data.leads.find((l) => l.id === task.lead_id) : undefined;
   const sequence = task.sequence_id ? data.sequences.find((q) => q.id === task.sequence_id) : undefined;
@@ -122,6 +124,15 @@ function DrawerBody({ data, task }: { data: PortalSnapshot; task: TaskLite }) {
         )}
 
         <Outcome task={task} />
+
+        {steps.length > 0 && (
+          <section>
+            <p className={SECTION}>Steps · {steps.length}</p>
+            <div className={`${GLASS_BOX} px-3 py-2`}>
+              <StepList steps={steps} />
+            </div>
+          </section>
+        )}
 
         {tree && (
           <section>

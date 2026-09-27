@@ -6,7 +6,7 @@ import { ChevronDown, FileText, Radio as RadioIcon, Users } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { int, money, moneyShort, taskId } from "@/lib/portal/format";
 import { slackThread } from "@/lib/portal/links";
-import type { PortalSnapshot } from "@/lib/portal/mock";
+import type { PortalSnapshot } from "@/lib/portal/snapshot";
 import { agentsById, tasksById } from "@/lib/portal/selectors";
 import { usePortal } from "@/lib/portal/store";
 import { openTask, setFilterParam } from "@/lib/portal/taskNav";

@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { PortalShell } from "@/components/portal/shell/PortalShell";
 
 export const metadata: Metadata = {
-  title: "Office — Autopilot",
+  title: "Office — Graphi",
   description: "Your AI sales team at work: who is working, what needs you, what it achieved today.",
 };
 

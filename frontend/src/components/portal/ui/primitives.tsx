@@ -2,10 +2,11 @@
 
 import Image from "next/image";
 import { animate, motion, useMotionValue, useTransform } from "motion/react";
-import { ArrowUpRight, RotateCw, type LucideIcon } from "lucide-react";
+import { ArrowUpRight, CircleAlert, type LucideIcon } from "lucide-react";
 import { useEffect, type ReactNode } from "react";
 import { budgetLevel, budgetPct, int, timeAgo } from "@/lib/portal/format";
 import { useNow } from "@/lib/portal/hooks";
+import { usePortal } from "@/lib/portal/store";
 import type { Tone } from "@/lib/portal/vocab";
 
 // --- tone → classes (the six semantic tokens) ----------------------------------
@@ -59,7 +60,7 @@ export function AgentAvatar({
         style={{ width: size, height: size, boxShadow: `0 0 0 1.5px ${color}, 0 0 18px -4px ${color}` }}
       >
         {/* Portraits are head-and-shoulders on a dark ground: zoom toward the face so it reads at 20–40px. */}
-        <Image src={src} alt="" width={size * 3} height={size * 3} className="size-full scale-[1.45] object-cover object-[50%_38%]" draggable={false} />
+        <Image src={src} alt="" width={size * 3} height={size * 3} unoptimized={/^https?:/.test(src)} className="size-full scale-[1.45] object-cover object-[50%_38%]" draggable={false} />
       </span>
     );
   }
@@ -212,10 +213,16 @@ export function Skeleton({ className = "" }: { className?: string }) {
 }
 
 export function InlineError({ what }: { what: string }) {
+  const { error, refresh } = usePortal();
   return (
-    <div role="status" className="flex items-center gap-2.5 rounded-xl border border-st-danger/25 bg-st-danger/7 px-3.5 py-2.5 text-sm text-[#ff9a92]">
-      <RotateCw className="size-3.5 animate-spin [animation-duration:2.4s]" />
-      Could not load {what}. Retrying…
+    <div role="status" className="flex flex-wrap items-center gap-2.5 rounded-xl border border-st-danger/25 bg-st-danger/7 px-3.5 py-2.5 text-sm text-[#ff9a92]">
+      <CircleAlert className="size-4 shrink-0" />
+      <span className="min-w-0 flex-1">
+        Could not load {what}.{error ? <span className="text-[#ff9a92]/70"> {error}</span> : null}
+      </span>
+      <button type="button" onClick={refresh} className="rounded-full border border-st-danger/30 px-3 py-1 text-xs text-[#ffb3ad] hover:bg-st-danger/10">
+        Retry
+      </button>
     </div>
   );
 }

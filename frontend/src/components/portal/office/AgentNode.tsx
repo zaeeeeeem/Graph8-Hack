@@ -7,7 +7,7 @@ import { ChevronDown } from "lucide-react";
 import type { ReactNode } from "react";
 import { int, taskId } from "@/lib/portal/format";
 import { NODE_H, NODE_W, agentHref } from "@/lib/portal/selectors";
-import type { TaskLite } from "@/lib/portal/mock";
+import type { TaskLite } from "@/lib/portal/snapshot";
 import type { AgentStatus, PortalAgentRow } from "@/lib/portal/types";
 import { AGENT_STATUS, TASK_KIND, agentStatusLabel, taskStatusLabel } from "@/lib/portal/vocab";
 import { AvatarStatus, BudgetBar, ChangeFlash, Mono, TimeAgo, ToneIcon } from "../ui/primitives";

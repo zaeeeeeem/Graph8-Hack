@@ -6,7 +6,7 @@ import { ChevronRight, Search, UserSearch, type LucideIcon } from "lucide-react"
 import { useState } from "react";
 import { money } from "@/lib/portal/format";
 import { g8Contact, g8Deal } from "@/lib/portal/links";
-import type { LeadLite, PortalSnapshot } from "@/lib/portal/mock";
+import type { LeadLite, PortalSnapshot } from "@/lib/portal/snapshot";
 import { agentsById, funnelBuckets, sortedLeads, stagesFor, type FunnelKey } from "@/lib/portal/selectors";
 import { usePortal } from "@/lib/portal/store";
 import { openLead, setStageFilter } from "@/lib/portal/taskNav";

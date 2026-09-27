@@ -1,7 +1,7 @@
 "use client";
 
 import { int } from "@/lib/portal/format";
-import type { PortalSnapshot } from "@/lib/portal/mock";
+import type { PortalSnapshot } from "@/lib/portal/snapshot";
 import { needsYouItems, tasksDoneShare } from "@/lib/portal/selectors";
 import { CountUp, InlineError, Skeleton, StatusPill } from "../ui/primitives";
 import { SURFACE } from "../ui/surface";

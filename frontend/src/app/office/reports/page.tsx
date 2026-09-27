@@ -3,7 +3,7 @@ import { Suspense } from "react";
 import { ReportsScreen } from "@/components/portal/reports/ReportsScreen";
 
 export const metadata: Metadata = {
-  title: "Reports — Autopilot",
+  title: "Reports — Graphi",
   description: "Standups, wins, handoffs and questions your AI sales team posts up the chain.",
 };
 

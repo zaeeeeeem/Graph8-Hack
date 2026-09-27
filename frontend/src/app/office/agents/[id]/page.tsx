@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { AgentScreen } from "@/components/portal/agent/AgentScreen";
 
 export const metadata: Metadata = {
-  title: "Agent — Autopilot",
+  title: "Agent — Graphi",
   description: "How one AI agent is spending and waking: budget, credit ledger, runs and tasks.",
 };
 

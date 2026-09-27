@@ -1,92 +1,193 @@
 "use client";
 
-// Mock data provider. Exposes the same shape the Supabase/TanStack version will:
-// { load, data, live }. When the backend is wired, replace the body of PortalDataProvider
-// with queries + useWorkspaceRealtime; components keep calling usePortal().
-//
-// Preview switches (read once from the URL on mount):
-//   ?state=loading | error | empty | onboarding   → force a screen state
-//   ?simulate=1                                    → replay the "make it move" snippets every 5 s
+// Live data provider. Loads every snapshot slice from Supabase for the signed-in user's workspace,
+// then keeps it fresh (docs/portal/01-data-access.md §4):
+//   • Realtime: one channel per workspace, one postgres_changes subscription per published table;
+//     a change marks the affected slices and they are refetched (invalidate, don't patch),
+//     debounced 250 ms so a burst of writes becomes one refetch.
+//   • 15 s poll of every slice, plus a refetch when the tab becomes visible again, so a dropped
+//     socket never leaves the screen stale.
+// Components read { load, data, live } via usePortal().
 
-import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
-import { emptySnapshot, onboardingSnapshot, seedSnapshot, type PortalSnapshot } from "./mock";
-import { SCENES } from "./simulate";
+import type { RealtimeChannel } from "@supabase/supabase-js";
+import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
+import { useAuth } from "@/components/auth/AuthProvider";
+import { getSupabase } from "@/lib/supabase/client";
+import { DEFAULT_WORKSPACE_ID, hasSupabaseEnv } from "@/lib/supabase/env";
+import { startOfDayIso } from "./format";
+import { FETCH, SLICES, TABLE_TO_SLICES, myWorkspaceIds, type QueryCtx, type SliceKey } from "./queries";
+import { buildActivity } from "./selectors";
+import type { PortalSnapshot } from "./snapshot";
 
 export type LoadState = "loading" | "ready" | "error";
 export type LiveState = "joined" | "connecting";
-export type Preview = "live" | "loading" | "error" | "empty" | "onboarding";
 
 export interface PortalStore {
   load: LoadState;
   data: PortalSnapshot | null;
   live: LiveState;
-  preview: Preview;
-  simulate: boolean;
-  lastScene: string | null;
+  /** Why the first load failed (shown in the inline error). */
+  error: string | null;
+  /** Refetch every slice now (used by "Retry"). */
+  refresh: () => void;
 }
 
-const INITIAL: PortalStore = {
-  load: "loading",
-  data: null,
-  live: "connecting",
-  preview: "live",
-  simulate: false,
-  lastScene: null,
-};
+const Ctx = createContext<PortalStore>({ load: "loading", data: null, live: "connecting", error: null, refresh: () => {} });
 
-const Ctx = createContext<PortalStore>(INITIAL);
+const POLL_MS = 15_000;
+const DEBOUNCE_MS = 250;
 
-const PREVIEWS: Preview[] = ["live", "loading", "error", "empty", "onboarding"];
+type Slices = Omit<PortalSnapshot, "activity">;
 
-// Every field a snapshot must have. Dev hot-reload keeps the provider's old state across edits to
-// mock.ts; if a field was added since, the snapshot is rebuilt instead of crashing a screen.
-const SNAPSHOT_KEYS = Object.keys(seedSnapshot(0)) as (keyof PortalSnapshot)[];
-
-function snapshotFor(preview: Preview, now: number): PortalSnapshot {
-  return preview === "empty" ? emptySnapshot(now) : preview === "onboarding" ? onboardingSnapshot(now) : seedSnapshot(now);
+function withActivity(s: Slices, dayStart: string): PortalSnapshot {
+  return { ...s, activity: buildActivity(s, dayStart) };
 }
-const FIRST_LOAD_MS = 650;
-const SCENE_MS = 5000;
 
 export function PortalDataProvider({ children }: { children: ReactNode }) {
-  const [store, setStore] = useState<PortalStore>(INITIAL);
+  const { user } = useAuth();
+  const [load, setLoad] = useState<LoadState>("loading");
+  const [data, setData] = useState<PortalSnapshot | null>(null);
+  const [live, setLive] = useState<LiveState>("connecting");
+  const [error, setError] = useState<string | null>(null);
+  const [workspaceId, setWorkspaceId] = useState<string | null>(null);
+  const [attempt, setAttempt] = useState(0);
 
-  // First load (client only: mock timestamps are relative to "now", so they must not SSR).
+  // Latest request per slice wins: an older response arriving late never overwrites newer data.
+  const seq = useRef<Record<string, number>>({});
+  const current = useRef<Slices | null>(null);
+  const tz = useRef("Asia/Karachi");
+
+  const ctxFor = useCallback((ws: string): QueryCtx => ({ sb: getSupabase(), ws, dayStart: startOfDayIso(tz.current) }), []);
+
+  /** Refetch some slices and merge whatever succeeded into the snapshot. */
+  const refetch = useCallback(
+    async (ws: string, keys: SliceKey[]) => {
+      if (!current.current) return;
+      const ctx = ctxFor(ws);
+      const results = await Promise.all(
+        keys.map(async (k) => {
+          const id = (seq.current[k] = (seq.current[k] ?? 0) + 1);
+          try {
+            const value = await FETCH[k](ctx);
+            return seq.current[k] === id ? ([k, value] as const) : null;
+          } catch (e) {
+            console.warn(`[portal] refetch ${k} failed:`, (e as Error).message);
+            return null;
+          }
+        }),
+      );
+      const patch = Object.fromEntries(results.filter((r) => r !== null));
+      if (!current.current || Object.keys(patch).length === 0) return;
+      const next = { ...current.current, ...patch } as Slices;
+      if (patch.workspace) tz.current = next.workspace.timezone || tz.current;
+      current.current = next;
+      setData(withActivity(next, ctx.dayStart));
+    },
+    [ctxFor],
+  );
+
+  // 1. Resolve the workspace: the user's first membership, else the public demo workspace.
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const requested = params.get("state") as Preview | null;
-    const preview: Preview = requested && PREVIEWS.includes(requested) ? requested : "live";
-    const simulate = params.get("simulate") === "1";
+    if (!user || !hasSupabaseEnv) return; // session loading, signed out or not configured (see `blocked`)
+    let alive = true;
+    myWorkspaceIds(getSupabase())
+      .then((ids) => alive && setWorkspaceId(ids[0] ?? DEFAULT_WORKSPACE_ID))
+      .catch(() => alive && setWorkspaceId(DEFAULT_WORKSPACE_ID));
+    return () => {
+      alive = false;
+    };
+  }, [user]);
 
-    const timer = setTimeout(() => {
-      if (preview === "loading") return;
-      if (preview === "error") {
-        setStore((s) => ({ ...s, load: "error", preview, live: "connecting" }));
-        return;
-      }
-      setStore({ load: "ready", data: snapshotFor(preview, Date.now()), live: "joined", preview, simulate, lastScene: null });
-    }, FIRST_LOAD_MS);
-    return () => clearTimeout(timer);
-  }, []);
-
-  // Outdated snapshot after a hot reload → rebuild it ("adjust state while rendering").
-  if (store.data && SNAPSHOT_KEYS.some((k) => store.data![k] === undefined)) {
-    setStore((s) => ({ ...s, data: snapshotFor(s.preview, Date.now()) }));
-  }
-
-  // Mock realtime loop.
+  // 2. First load of every slice (again on Retry).
   useEffect(() => {
-    if (!store.simulate || store.load !== "ready") return;
-    let i = 0;
-    const id = setInterval(() => {
-      const scene = SCENES[i % SCENES.length];
-      i += 1;
-      setStore((s) => (s.data ? { ...s, data: scene.run(s.data, Date.now()), lastScene: scene.label } : s));
-    }, SCENE_MS);
-    return () => clearInterval(id);
-  }, [store.simulate, store.load]);
+    if (!workspaceId) return;
+    let alive = true;
+    const ctx = ctxFor(workspaceId);
+    Promise.all(SLICES.map(async (k) => [k, await FETCH[k](ctx)] as const))
+      .then((entries) => {
+        if (!alive) return;
+        const slices = Object.fromEntries(entries) as unknown as Slices;
+        tz.current = slices.workspace.timezone || tz.current;
+        // The first load used the default timezone; if the workspace's differs, the next poll corrects the ledger window.
+        current.current = slices;
+        setData(withActivity(slices, startOfDayIso(tz.current)));
+        setError(null);
+        setLoad("ready");
+      })
+      .catch((e: Error) => {
+        if (!alive) return;
+        const msg = e.message.includes("0 rows") || e.message.includes("multiple (or no) rows")
+          ? "This workspace does not exist or you do not have access to it."
+          : e.message;
+        setError(msg);
+        setLoad("error");
+      });
+    return () => {
+      alive = false;
+    };
+  }, [workspaceId, attempt, ctxFor]);
 
-  return <Ctx.Provider value={store}>{children}</Ctx.Provider>;
+  // 3. Realtime + poll + refetch on focus, once the first load is in.
+  useEffect(() => {
+    if (!workspaceId || load !== "ready") return;
+    const sb = getSupabase();
+    const ws = workspaceId;
+    const pending = new Set<SliceKey>();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const flush = () => {
+      const keys = [...pending];
+      pending.clear();
+      if (keys.length) void refetch(ws, keys);
+    };
+    const mark = (table: string) => {
+      TABLE_TO_SLICES[table]?.forEach((k) => pending.add(k));
+      clearTimeout(timer);
+      timer = setTimeout(flush, DEBOUNCE_MS);
+    };
+
+    let channel: RealtimeChannel = sb.channel(`ws:${ws}`);
+    for (const table of Object.keys(TABLE_TO_SLICES)) {
+      const filter = table === "workspaces" ? `id=eq.${ws}` : `workspace_id=eq.${ws}`;
+      channel = channel.on("postgres_changes", { event: "*", schema: "public", table, filter }, () => mark(table));
+    }
+    channel.subscribe((status) => {
+      setLive(status === "SUBSCRIBED" ? "joined" : "connecting");
+      // After a reconnect, catch up on anything missed while the socket was down.
+      if (status === "SUBSCRIBED") void refetch(ws, SLICES);
+    });
+
+    const poll = setInterval(() => void refetch(ws, SLICES), POLL_MS);
+    const onVisible = () => document.visibilityState === "visible" && void refetch(ws, SLICES);
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("online", onVisible);
+
+    return () => {
+      clearTimeout(timer);
+      clearInterval(poll);
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("online", onVisible);
+      void sb.removeChannel(channel);
+      setLive("connecting");
+    };
+  }, [workspaceId, load, refetch]);
+
+  const refresh = useCallback(() => {
+    if (load === "error") {
+      setLoad("loading");
+      setAttempt((n) => n + 1);
+    } else if (workspaceId) void refetch(workspaceId, SLICES);
+  }, [load, workspaceId, refetch]);
+
+  // Nothing to load without configuration or a session: report it instead of spinning forever.
+  const blocked = !hasSupabaseEnv
+    ? "Supabase is not configured: set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY."
+    : user === null
+      ? "You are signed out."
+      : null;
+
+  return (
+    <Ctx.Provider value={{ load: blocked ? "error" : load, data: blocked ? null : data, live, error: blocked ?? error, refresh }}>{children}</Ctx.Provider>
+  );
 }
 
 export const usePortal = () => useContext(Ctx);

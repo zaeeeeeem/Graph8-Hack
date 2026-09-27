@@ -3,7 +3,7 @@
 import { CalendarCheck, CircleDollarSign, MessageSquareReply, Minus, TrendingUp, UserSearch } from "lucide-react";
 import type { ComponentType } from "react";
 import { int, money } from "@/lib/portal/format";
-import type { ActivityPoint, PortalSnapshot } from "@/lib/portal/mock";
+import type { ActivityPoint, PortalSnapshot } from "@/lib/portal/snapshot";
 import { activitySeries, lastHourDelta } from "@/lib/portal/selectors";
 import { ChangeFlash, CountUp, InlineError, Skeleton } from "../ui/primitives";
 import { SURFACE } from "../ui/surface";

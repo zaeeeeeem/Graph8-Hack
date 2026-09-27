@@ -4,7 +4,7 @@ import { AnimatePresence, motion } from "motion/react";
 import { CircleCheck, History } from "lucide-react";
 import { taskId } from "@/lib/portal/format";
 import { slackThread } from "@/lib/portal/links";
-import type { ApprovalLite, PortalSnapshot } from "@/lib/portal/mock";
+import type { ApprovalLite, PortalSnapshot } from "@/lib/portal/snapshot";
 import { decisionDraft, decisionPayloadLine } from "@/lib/portal/payload";
 import { agentsById, needsYouItems } from "@/lib/portal/selectors";
 import { usePortal } from "@/lib/portal/store";

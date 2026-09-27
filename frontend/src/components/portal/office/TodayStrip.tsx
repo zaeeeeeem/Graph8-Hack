@@ -3,7 +3,7 @@
 import { int, moneyShort } from "@/lib/portal/format";
 import { slackThread } from "@/lib/portal/links";
 import { needsYouItems } from "@/lib/portal/selectors";
-import type { PortalSnapshot } from "@/lib/portal/mock";
+import type { PortalSnapshot } from "@/lib/portal/snapshot";
 import { BudgetBar, ChangeFlash, CountUp, InlineError, Skeleton } from "../ui/primitives";
 
 const TILE = "relative flex min-w-0 flex-col justify-center gap-1 overflow-hidden rounded-[inherit] px-5 py-3.5";

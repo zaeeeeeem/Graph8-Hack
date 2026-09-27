@@ -3,8 +3,9 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { motion } from "motion/react";
-import { FileText, Inbox, LayoutGrid, PanelLeft, Sparkles, Workflow, X } from "lucide-react";
+import { FileText, Inbox, LayoutGrid, LogOut, PanelLeft, Sparkles, Workflow, X } from "lucide-react";
 import type { ComponentType } from "react";
+import { useAuth } from "@/components/auth/AuthProvider";
 import { LogoOrb } from "@/components/fusion/FusionNav";
 import { taskId } from "@/lib/portal/format";
 import { focusAgent } from "@/lib/portal/hooks";
@@ -70,9 +71,9 @@ export function Sidebar({
       {/* Brand + collapse toggle */}
       <div className={`relative flex h-16 shrink-0 items-center ${collapsed ? "justify-center" : "justify-between pr-3 pl-4"}`}>
         {!collapsed && (
-          <Link href="/" className="flex items-center gap-2.5" title="Autopilot home">
+          <Link href="/" className="flex items-center gap-2.5" title="Graphi home">
             <LogoOrb size={30} />
-            <span className="font-display text-[19px] leading-none text-white">Autopilot</span>
+            <span className="font-display text-[19px] leading-none text-white">Graphi</span>
           </Link>
         )}
         <button
@@ -197,15 +198,57 @@ export function Sidebar({
         >
           <ToneIcon icon={UI_ICON.live} tone={live === "joined" ? "success" : "muted"} />
           {!collapsed && <span className={live === "joined" ? "text-white/70" : "text-white/40"}>{live === "joined" ? "Live" : "Reconnecting…"}</span>}
-          {!collapsed && <span className="ml-auto rounded bg-white/6 px-1.5 py-0.5 text-[10px] tracking-wide text-white/35 uppercase">Mock data</span>}
+          {!collapsed && data?.workspace.is_demo && (
+            <span className="ml-auto rounded bg-white/6 px-1.5 py-0.5 text-[10px] tracking-wide text-white/35 uppercase" title="Public demo workspace">
+              Demo
+            </span>
+          )}
         </div>
         {!collapsed && data && (
           <LinkOut href={slackChannel(data.workspace.slack_channel_hq)} className="px-2 text-xs">
             Open #sales-hq
           </LinkOut>
         )}
+        <Account collapsed={collapsed} />
       </div>
     </motion.aside>
+  );
+}
+
+/** The signed-in user (Supabase Auth) and sign out. */
+function Account({ collapsed }: { collapsed: boolean }) {
+  const { user, signOut } = useAuth();
+  if (!user) return null;
+  const name = (user.user_metadata?.full_name as string | undefined) ?? (user.user_metadata?.name as string | undefined);
+  const photo = (user.user_metadata?.avatar_url as string | undefined) ?? (user.user_metadata?.picture as string | undefined);
+  const label = name ?? user.email ?? "Signed in";
+  const initial = label.trim().charAt(0).toUpperCase();
+  return (
+    <div className={`mt-1 flex items-center gap-2.5 border-t border-white/8 pt-3 ${collapsed ? "flex-col" : "px-1"}`}>
+      {photo ? (
+        // eslint-disable-next-line @next/next/no-img-element -- Google avatar host is not in next/image config
+        <img src={photo} alt="" referrerPolicy="no-referrer" className="size-8 shrink-0 rounded-full border border-white/10 object-cover" />
+      ) : (
+        <span className="flex size-8 shrink-0 items-center justify-center rounded-full border border-white/10 bg-white/[0.06] text-[13px] font-medium text-white/80">
+          {initial}
+        </span>
+      )}
+      {!collapsed && (
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-[12px] text-white/85">{label}</span>
+          {name && user.email && <span className="block truncate text-[11px] text-white/40">{user.email}</span>}
+        </span>
+      )}
+      <button
+        type="button"
+        onClick={() => void signOut()}
+        aria-label="Sign out"
+        title="Sign out"
+        className="flex size-8 shrink-0 items-center justify-center rounded-lg text-white/45 transition-colors hover:bg-white/8 hover:text-white"
+      >
+        <LogOut className="size-4" />
+      </button>
+    </div>
   );
 }
 

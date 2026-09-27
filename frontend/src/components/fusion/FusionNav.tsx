@@ -36,7 +36,7 @@ export function Brand({ phone }: { phone?: boolean }) {
   return (
     <Link href="/" className={`relative flex w-min flex-row items-center justify-start ${phone ? "gap-2" : "gap-3"} no-underline`}>
       <LogoOrb size={phone ? 36 : 40} />
-      <p className="font-display text-[22px] leading-none font-medium whitespace-pre text-white capitalize">Autopilot</p>
+      <p className="font-display text-[22px] leading-none font-medium whitespace-pre text-white capitalize">Graphi</p>
     </Link>
   );
 }
@@ -77,7 +77,7 @@ export function FusionNav() {
               <NavLink key={l.label} {...l} />
             ))}
           </div>
-          <GlowButton href="#" size="small">
+          <GlowButton href="/office" size="small">
             Get Started
           </GlowButton>
         </div>
@@ -110,7 +110,7 @@ export function FusionNav() {
               {LINKS.map((l) => (
                 <NavLink key={l.label} {...l} />
               ))}
-              <GlowButton href="#" size="small">
+              <GlowButton href="/office" size="small">
                 Get Started
               </GlowButton>
             </div>

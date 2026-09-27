@@ -6,7 +6,7 @@ import { X } from "lucide-react";
 import { useEffect } from "react";
 import { money, taskId } from "@/lib/portal/format";
 import { g8Contact, g8Deal, g8Meeting, g8Sequence } from "@/lib/portal/links";
-import type { LeadEventLite, LeadLite, PortalSnapshot, SequenceLite } from "@/lib/portal/mock";
+import type { LeadEventLite, LeadLite, PortalSnapshot, SequenceLite } from "@/lib/portal/snapshot";
 import { agentsById, eventsForLead, tasksById } from "@/lib/portal/selectors";
 import { usePortal } from "@/lib/portal/store";
 import { closeLead, openTask } from "@/lib/portal/taskNav";

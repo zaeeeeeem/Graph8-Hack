@@ -4,7 +4,7 @@ import { AnimatePresence, motion } from "motion/react";
 import { MessagesSquare } from "lucide-react";
 import { slackThread } from "@/lib/portal/links";
 import { agentsById } from "@/lib/portal/selectors";
-import type { PortalSnapshot } from "@/lib/portal/mock";
+import type { PortalSnapshot } from "@/lib/portal/snapshot";
 import { FOUNDER_LABEL, REPORT_KIND, UNKNOWN_AGENT_LABEL } from "@/lib/portal/vocab";
 import { AgentAvatar, EmptyLine, InlineError, LinkOut, Skeleton, TONE, TimeAgo } from "../ui/primitives";
 

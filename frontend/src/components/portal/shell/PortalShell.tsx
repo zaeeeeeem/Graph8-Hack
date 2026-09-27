@@ -66,7 +66,6 @@ function ShellFrame({ children }: { children: ReactNode }) {
       <main className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
         <MobileTopBar onMenu={() => setMobileOpen(true)} />
         <div id="portal-scroll" className="min-h-0 flex-1 overflow-y-auto overscroll-contain pr-1">{children}</div>
-        <SimulationBadge />
       </main>
 
       {/* Drawers read ?task= from the URL (useSearchParams needs a Suspense boundary). */}
@@ -84,33 +83,11 @@ function MobileTopBar({ onMenu }: { onMenu: () => void }) {
     <div className="mb-3 flex h-14 shrink-0 items-center justify-between rounded-2xl border border-white/10 bg-white/2 px-3 lg:hidden">
       <div className="flex items-center gap-2.5">
         <LogoOrb size={28} />
-        <span className="font-display text-lg">{data?.workspace.name ?? "Autopilot"}</span>
+        <span className="font-display text-lg">{data?.workspace.name ?? "Graphi"}</span>
       </div>
       <button type="button" onClick={onMenu} aria-label="Open menu" className="flex size-10 items-center justify-center rounded-lg text-white/70 hover:bg-white/6">
         <Menu className="size-5" />
       </button>
-    </div>
-  );
-}
-
-/** Only visible with ?simulate=1: says which mock "realtime" event just played. */
-function SimulationBadge() {
-  const { simulate, lastScene } = usePortal();
-  if (!simulate) return null;
-  return (
-    <div className="pointer-events-none absolute bottom-3 left-1/2 z-30 -translate-x-1/2">
-      <AnimatePresence mode="wait">
-        <motion.div
-          key={lastScene ?? "waiting"}
-          initial={{ opacity: 0, y: 8 }}
-          animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, y: -8 }}
-          className="rounded-full border border-white/10 bg-black/80 px-3 py-1.5 text-xs text-white/60 backdrop-blur"
-        >
-          <span className="mr-1.5 text-white/35">Simulating</span>
-          {lastScene ?? "first event in 5 s…"}
-        </motion.div>
-      </AnimatePresence>
     </div>
   );
 }

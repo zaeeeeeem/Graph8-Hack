@@ -2,10 +2,11 @@
 
 import Link from "next/link";
 import { AnimatePresence, motion } from "motion/react";
-import { Activity, ArrowLeft, Coins, ListChecks, UserX, Wallet } from "lucide-react";
-import { int, taskId } from "@/lib/portal/format";
+import { Activity, ArrowLeft, ChevronDown, Coins, ListChecks, UserX, Wallet } from "lucide-react";
+import { useState } from "react";
+import { int, startOfDayIso, taskId } from "@/lib/portal/format";
 import { slackChannel, slackThread } from "@/lib/portal/links";
-import type { CreditLite, PortalSnapshot, RunLite, TaskLite } from "@/lib/portal/mock";
+import type { CreditLite, PortalSnapshot, RunLite, TaskLite } from "@/lib/portal/snapshot";
 import {
   agentBySlug,
   agentHref,
@@ -16,12 +17,13 @@ import {
   runDelegator,
   runsForAgent,
   spendBySource,
+  stepsForRun,
   tasksById,
   tasksForAgent,
 } from "@/lib/portal/selectors";
 import { usePortal } from "@/lib/portal/store";
 import { openTask } from "@/lib/portal/taskNav";
-import type { PortalAgentRow } from "@/lib/portal/types";
+import type { PortalActivityRow, PortalAgentRow } from "@/lib/portal/types";
 import {
   AGENT_STATUS,
   CREDIT_SOURCE,
@@ -35,6 +37,7 @@ import {
 } from "@/lib/portal/vocab";
 import { AgentAvatar, AvatarStatus, BudgetBar, CountUp, EmptyLine, InlineError, LinkOut, Mono, Skeleton, StatusPill, TimeAgo, ToneIcon } from "../ui/primitives";
 import { INNER_BOX, SectionCard } from "../ui/SectionCard";
+import { StepList } from "../ui/StepList";
 import { CARD_GLOW, LaserBorder, PILL, PILL_SM_BUTTON, PillLink, SURFACE, TAG } from "../ui/surface";
 
 const CLOCK = new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit" });
@@ -121,12 +124,13 @@ function AgentSwitcher({ agents, activeId }: { agents: PortalAgentRow[]; activeI
 }
 
 function AgentBody({ data, agent: a }: { data: PortalSnapshot; agent: PortalAgentRow }) {
-  const runs = runsForAgent(data, a.id);
+  const runs = runsForAgent(data, a.id).slice(0, 50);
+  const dayStart = startOfDayIso(data.workspace.timezone);
   const ledger = creditsForAgent(data, a.id);
   const tasks = tasksForAgent(data, a.id);
   return (
     <>
-      <Hero data={data} agent={a} runCount={runs.length} />
+      <Hero data={data} agent={a} runCount={runs.filter((r) => Date.parse(r.started_at) >= Date.parse(dayStart)).length} />
       <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.25fr)]">
         <div className="flex flex-col gap-4">
           <Budget agent={a} ledger={ledger} />
@@ -362,7 +366,7 @@ function Runs({ data, runs }: { data: PortalSnapshot; runs: RunLite[] }) {
         <ol className="flex flex-col gap-3">
           <AnimatePresence initial={false}>
             {runs.map((r) => (
-              <RunItem key={r.id} run={r} task={r.task_id ? byTask.get(r.task_id) : undefined} delegator={runDelegator(data, r)} />
+              <RunItem key={r.id} run={r} task={r.task_id ? byTask.get(r.task_id) : undefined} delegator={runDelegator(data, r)} steps={stepsForRun(data, r.id)} />
             ))}
           </AnimatePresence>
         </ol>
@@ -371,7 +375,8 @@ function Runs({ data, runs }: { data: PortalSnapshot; runs: RunLite[] }) {
   );
 }
 
-function RunItem({ run: r, task, delegator }: { run: RunLite; task?: TaskLite; delegator?: PortalAgentRow }) {
+function RunItem({ run: r, task, delegator, steps }: { run: RunLite; task?: TaskLite; delegator?: PortalAgentRow; steps: PortalActivityRow[] }) {
+  const [open, setOpen] = useState(r.status === "running");
   const st = RUN_STATUS[r.status];
   const trig = RUN_TRIGGER[r.trigger];
   const trigLabel = r.trigger === "delegation" && delegator ? `Assigned by ${delegator.name}` : trig.label;
@@ -411,6 +416,24 @@ function RunItem({ run: r, task, delegator }: { run: RunLite; task?: TaskLite; d
         </span>
         {r.model && <span className="ml-auto text-white/30">{r.model}</span>}
       </div>
+      {steps.length > 0 && (
+        <div className="border-t border-white/[0.06] pt-2">
+          <button
+            type="button"
+            onClick={() => setOpen((o) => !o)}
+            aria-expanded={open}
+            className="flex items-center gap-1.5 text-[12px] text-white/50 transition-colors hover:text-white"
+          >
+            <ChevronDown className={`size-3.5 transition-transform ${open ? "rotate-180" : ""}`} />
+            {open ? "Hide" : "Show"} {steps.length} {steps.length === 1 ? "step" : "steps"}
+          </button>
+          {open && (
+            <div className="mt-1.5">
+              <StepList steps={steps} />
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 

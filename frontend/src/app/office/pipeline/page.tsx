@@ -3,7 +3,7 @@ import { Suspense } from "react";
 import { PipelineScreen } from "@/components/portal/pipeline/PipelineScreen";
 
 export const metadata: Metadata = {
-  title: "Pipeline — Autopilot",
+  title: "Pipeline — Graphi",
   description: "Every lead your AI sales team found, contacted and closed — mirrored from graph8.",
 };
 

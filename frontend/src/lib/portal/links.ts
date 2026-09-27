@@ -8,22 +8,10 @@ export const slackChannel = (channel: string | null) => (channel ? `https://slac
 
 const G8 = process.env.NEXT_PUBLIC_G8_APP_URL ?? "https://app.graph8.com";
 
-// See docs/graph8-app-links.md. LIST pages are verified; RECORD patterns are not yet,
-// so each builder falls back to the verified list page until RECORD_VERIFIED is flipped.
-const RECORD_VERIFIED = { contact: false, deal: false, sequence: false, meeting: false };
-const LIST = {
-  contacts: `${G8}/contacts`,
-  deals: `${G8}/deals/pipeline`,
-  sequences: `${G8}/sequencer`,
-  meetings: `${G8}/appointments?tab=bookings`,
-  settings: `${G8}/studio/settings`,
-};
-
-export const g8Contact = (id: string | null) =>
-  !id ? null : RECORD_VERIFIED.contact ? `${G8}/contacts/${id}` : LIST.contacts;
-export const g8Deal = (id: string | null) => (!id ? null : RECORD_VERIFIED.deal ? `${G8}/deals/${id}` : LIST.deals);
-export const g8Sequence = (id: string | null) =>
-  !id ? null : RECORD_VERIFIED.sequence ? `${G8}/sequencer/${id}` : LIST.sequences;
-export const g8Meeting = (id: string | null) =>
-  !id ? null : RECORD_VERIFIED.meeting ? `${G8}/appointments/${id}` : LIST.meetings;
-export const g8Settings = () => LIST.settings;
+// Verified on real records (27 Sep, live org). Meetings have no per-record page: the bookings list.
+export const g8Contact = (id: string | number | null) => (id ? `${G8}/contacts/${id}` : null);
+export const g8Deal = (id: string | number | null) => (id ? `${G8}/deals/${id}` : null);
+export const g8Sequence = (id: string | null) => (id ? `${G8}/sequencer/sequence/${id}` : null); // NOT /sequences, NOT /sequencer/{id}
+export const g8Meeting = (id: string | null) => (id ? `${G8}/appointments?tab=bookings` : null);
+export const g8Deals = () => `${G8}/deals/pipeline`;
+export const g8Settings = () => `${G8}/studio/settings`;

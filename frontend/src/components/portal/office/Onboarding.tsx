@@ -5,7 +5,7 @@ import { Check, Copy } from "lucide-react";
 import { useState } from "react";
 import { GlowButton } from "@/components/fusion/Buttons";
 import { slackChannel } from "@/lib/portal/links";
-import type { PortalSnapshot } from "@/lib/portal/mock";
+import type { PortalSnapshot } from "@/lib/portal/snapshot";
 
 const GHOST_ROLES = ["Scout", "Researcher", "SDR", "Closer"];
 

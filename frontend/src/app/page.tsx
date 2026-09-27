@@ -1,3 +1,5 @@
+import { Suspense } from "react";
+import { AuthModalHost } from "@/components/auth/AuthModal";
 import { AIPoweredSection } from "@/components/fusion/AIPoweredSection";
 import { CTAFooter } from "@/components/fusion/CTAFooter";
 import { FaqSection } from "@/components/fusion/FaqSection";
@@ -18,6 +20,10 @@ export default function Home() {
       <IntegrationsSection />
       <FaqSection />
       <CTAFooter />
+      {/* Sign in / sign up modal, opened by ?auth= (the dashboard guard sends signed-out users here). */}
+      <Suspense fallback={null}>
+        <AuthModalHost />
+      </Suspense>
     </div>
   );
 }

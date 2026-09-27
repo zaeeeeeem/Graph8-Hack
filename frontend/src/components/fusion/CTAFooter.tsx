@@ -110,7 +110,7 @@ function CTASection() {
             <div className="relative flex h-min w-full flex-none flex-col items-center justify-center gap-2.5 overflow-visible">
               <div className="relative flex h-min w-full flex-none flex-row flex-wrap items-center justify-center gap-4 overflow-visible max-fu-tablet:flex-col">
                 <FadeUp delay={0.6} ease={BUTTON_EASE} className="relative h-auto w-auto flex-none max-fu-tablet:w-full">
-                  <GlowButton href="#" className="max-fu-tablet:w-full">
+                  <GlowButton href="/office" className="max-fu-tablet:w-full">
                     Get Started - Free
                   </GlowButton>
                 </FadeUp>

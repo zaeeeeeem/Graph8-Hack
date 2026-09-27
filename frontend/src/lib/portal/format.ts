@@ -2,7 +2,8 @@
 
 export const taskId = (n: number) => `T-${n}`;
 
-export const int = (n: number) => Math.round(n).toLocaleString("en-US");
+/** Integer with thousands separators; missing / non-numeric values (live JSON) read as 0, never "NaN". */
+export const int = (n: number | string | null | undefined) => Math.round(Number(n) || 0).toLocaleString("en-US");
 
 export const budgetPct = (spent: number, budget: number) =>
   budget > 0 ? Math.min(100, Math.round((spent / budget) * 100)) : 0;
@@ -49,4 +50,36 @@ export function timeAgo(iso: string | null, now: number): string {
   const h = Math.floor(m / 60);
   if (h < 24) return `${h} h ago`;
   return DAY_TIME.format(t).replace(",", "");
+}
+
+/** Milliseconds `tz` is ahead of UTC at `at` (e.g. +5 h for Asia/Karachi). */
+function tzOffsetMs(tz: string, at: Date): number {
+  const p = Object.fromEntries(
+    new Intl.DateTimeFormat("en-US", {
+      timeZone: tz,
+      hourCycle: "h23",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    })
+      .formatToParts(at)
+      .map((x) => [x.type, x.value]),
+  );
+  const asUtc = Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute, +p.second);
+  return asUtc - Math.floor(at.getTime() / 1000) * 1000;
+}
+
+/** Midnight of "today" in the workspace timezone, as an ISO instant (matches the server's spend day). */
+export function startOfDayIso(tz: string, now = Date.now()): string {
+  let offset = 0;
+  try {
+    offset = tzOffsetMs(tz, new Date(now));
+  } catch {
+    offset = -new Date(now).getTimezoneOffset() * 60_000; // unknown tz name → browser's zone
+  }
+  const localMidnight = Math.floor((now + offset) / 86_400_000) * 86_400_000;
+  return new Date(localMidnight - offset).toISOString();
 }

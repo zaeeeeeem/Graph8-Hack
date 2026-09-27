@@ -1,7 +1,7 @@
 "use client";
 
 import { Area, AreaChart, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, YAxis } from "recharts";
-import type { ActivityPoint } from "@/lib/portal/mock";
+import type { ActivityPoint } from "@/lib/portal/snapshot";
 
 // One accent (brand blue) for the value, a lighter step of the same hue for the track;
 // sparklines ride the de-emphasis ink with the current point in the accent.
