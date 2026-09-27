@@ -93,3 +93,14 @@ export async function markInbound(id: string | number, status: 'processed' | 'ig
   await store.db.from('inbound_events')
     .update({ status, error: err ?? null, processed_at: new Date().toISOString() }).eq('id', id);
 }
+
+/** Gmail id of the first email we sent this lead (Usman direct compose → lead_events email_sent data.ref). */
+export async function firstSentRef(leadId: UUID): Promise<string | null> {
+  const { data } = await store.db.from('lead_events').select('data,created_at').eq('lead_id', leadId).eq('type', 'email_sent')
+    .order('created_at', { ascending: true }).limit(20);
+  for (const e of (data ?? []) as Array<{ data: Record<string, any> }>) {
+    const ref = e.data?.ref ?? e.data?.direct_ref;
+    if (ref) return String(ref);
+  }
+  return null;
+}

@@ -54,7 +54,8 @@ const h = vi.hoisted(() => {
         upsert: (p: any, o?: any) => { op = 'upsert'; payload = p; upsertOpts = o; return b; },
         eq: (k: string, v: any) => { filters.push((r) => r[k] === v); return b; },
         ilike: (k: string, v: string) => { filters.push((r) => String(r[k] ?? '').toLowerCase() === v.toLowerCase()); return b; },
-        in: (k: string, v: any[]) => { filters.push((r) => v.includes(r[k])); return b; },
+        gte: (k: string, v: any) => { filters.push((r) => String(r[k] ?? '') >= String(v)); return b; },
+      in: (k: string, v: any[]) => { filters.push((r) => v.includes(r[k])); return b; },
         not: (k: string, _op: string, _v: any) => { filters.push((r) => r[k] !== null && r[k] !== undefined); return b; },
         order: () => b,
         limit: (n: number) => { limitN = n; return b; },
@@ -177,12 +178,14 @@ beforeEach(() => {
       '2030-01-08': [{ time: '2030-01-08T09:00:00+00:00' }],
     } } };
     if (path === '/global-context/documents') return { data: [{ display_name: 'Pricing Matrix', content: 'Growth $1,000/mo' }] };
+    if (path === '/contacts/101') return { data: { id: 101, work_email: 'ali@acme.com' } };
     if (path === '/team-members') return { data: { items: [{ id: 'tm1', propelauth_user_id: 'pa1', status: 'active' }] } };
     return { data: {} };
   });
   mg8.post.mockImplementation(async (path: string) => {
     h.calls.push(`post:${path}`);
     if (path === '/deals') return { data: { id: 'deal-1', stage_name: 'New Meeting' } };
+    if (path === '/inbox/emails/compose') { h.calls.push('send'); return { data: { success: true, status: 'sent', email_id: 'gm-reply' } }; }
     return { data: {} };
   });
   mg8.sendReplyGuarded.mockImplementation(async () => { h.calls.push('send'); return { data: { message_id: 'out1' } }; });
@@ -428,3 +431,58 @@ describe('inbox poll', () => {
     expect((await pollInboxOnce('ws1')).emitted).toBe(0);
   });
 });
+
+// ---------------------------------------------------------------------------
+describe('REPLYFIX: mailbox search poll + compose replies (sendfix era)', () => {
+  const MAILBOX_THREAD = {
+    id: 'CAB123@mail.gmail.com', subject: '150-300+ creator videos', contact: { id: 101, email: 'ali@acme.com' },
+    messages: { messages: [
+      { message_id: 'gm1', date: '2026-09-27 06:43:42.000000', responder: 'USER', from_email: ['founder@8x.social'], content: '', html_content: '<p>Hi Ali</p>', draft: false },
+      { message_id: 'z-1@zoho', date: '2026-09-27 06:46:40.000000', responder: 'OTHER', from_email: ['ali@acme.com'], content: 'that sounds cool, i am interested\r\n\r\nOn Sun, Zaeem wrote:\r\n> Hi Ali', draft: false },
+      { message_id: 'gm2', date: '2026-09-27 06:47:14.000000', responder: 'USER', from_email: ['founder@8x.social'], content: '', draft: false },
+    ] },
+  };
+  beforeEach(() => {
+    h.state.fake.tables.lead_events.push({ id: 'e1', workspace_id: 'ws1', lead_id: 'L1', type: 'email_sent', created_at: new Date(Date.now() - 3600_000).toISOString(), data: { ref: 'gm1' } });
+    MAILBOX_THREAD.messages.messages[1].date = new Date(Date.now() - 600_000).toISOString().replace('T', ' ').replace('Z', '');
+    const basePost = mg8.post.getMockImplementation();
+    mg8.post.mockImplementation(async (path: string, body: any) => {
+      if (path.startsWith('/inbox/emails/search')) { h.calls.push('search'); return { data: { items: [MAILBOX_THREAD], total: 1 } }; }
+      return basePost(path, body);
+    });
+  });
+
+  it('detects the prospect reply via POST /inbox/emails/search, once', async () => {
+    const seen: any[] = [];
+    bus.on('graph8.event', (e) => { if ((e.payload as any).mailbox_thread) seen.push(e); });
+    const r1 = await pollInboxOnce('ws1');
+    const r2 = await pollInboxOnce('ws1');
+    await new Promise((r) => setTimeout(r, 10));
+    expect(r1.emitted).toBeGreaterThanOrEqual(1);
+    expect(seen).toHaveLength(1);
+    expect(r2.emitted).toBe(0);
+    const body = mg8.post.mock.calls.find((c: any[]) => String(c[0]).startsWith('/inbox/emails/search'))[1];
+    expect(body).toMatchObject({ mailboxes: ['founder@8x.social'], search_emails: ['ali@acme.com'] });
+    expect(seen[0].payload).toMatchObject({ reply_id: 'CAB123@mail.gmail.com', message_id: 'z-1@zoho', contact_id: '101', reply_text: 'that sounds cool, i am interested' });
+  });
+
+  it('interested reply goes out via guarded compose threaded to our first email', async () => {
+    mllm.json.mockResolvedValue({ intent: 'interested', proposed_time: null });
+    const input = { reply: normalize('engagement.email_replied', { reply_id: 'CAB123@mail.gmail.com', message_id: 'z-1@zoho', contact_id: '101', email: 'ali@acme.com', reply_subject: '150-300+ creator videos', reply_text: 'sounds cool, interested', _source: 'poll' }), lead_id: 'L1' };
+    await zara.run(makeCtx('handle_reply', input));
+    expect(mg8.sendReplyGuarded).not.toHaveBeenCalled();
+    const compose = mg8.post.mock.calls.find((c: any[]) => c[0] === '/inbox/emails/compose');
+    expect(compose[1]).toMatchObject({ to: ['ali@acme.com'], reply_to_email_id: 'gm1', save_as_draft: false, subject: 'Re: 150-300+ creator videos', from_mailbox: 'founder@8x.social' });
+    const sent = h.state.fake.tables.lead_events.find((e) => e.type === 'reply_sent');
+    expect(sent.data).toMatchObject({ via: 'compose', ref: 'gm-reply' });
+  });
+
+  it('compose path refuses a non-test lead (drafts only)', async () => {
+    h.state.fake.tables.leads[0].is_test_contact = false;
+    mg8.isAllowlisted.mockResolvedValue(false);
+    mllm.json.mockResolvedValue({ intent: 'interested', proposed_time: null });
+    await zara.run(makeCtx('handle_reply', { reply: normalize('engagement.email_replied', { reply_id: 'CAB123@mail.gmail.com', message_id: 'z-2', contact_id: '101', reply_text: 'interested', _source: 'poll' }), lead_id: 'L1' }));
+    expect(mg8.post.mock.calls.find((c: any[]) => c[0] === '/inbox/emails/compose')).toBeUndefined();
+  });
+});
+

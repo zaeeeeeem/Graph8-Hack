@@ -17,14 +17,15 @@ import { store } from '../lib/store';
 import { normalize, type NormalizedMeeting, type NormalizedReply, type NormalizedVoice } from '../inbound/normalize';
 import { registerInboxPoll } from '../inbound/inbox-poll';
 import { classifyReply, AUTO_INTENTS, type Classification } from './zara/classify';
-import { addLeadEvent, claimInbound, leadByContact, leadByEmail, leadById, leadEmail, updateLead } from './zara/db';
+import { addLeadEvent, claimInbound, firstSentRef, leadByContact, leadByEmail, leadById, leadEmail, updateLead } from './zara/db';
+import { makeComposeSender } from './usman/compose';
 import { findThread, getThread, latestInbound, replyText, threadContactEmail, type InboxThread } from './zara/inbox';
 import { bookingLink, bookMeeting, formatSlot, suggestSlots, type Slot } from './zara/booking';
 import { draftReply, templateDraft } from './zara/draft';
 import { stopAccount } from './zara/stop';
 import { createDeal } from './zara/deal';
 import { mapDisposition } from './zara/voice';
-import { preview, scrub } from './zara/pii';
+import { preview, scrub, stripQuoted } from './zara/pii';
 import { replyApprovalBlocks, replyStoryLine } from '../slack/cards/reply';
 import { winBlocks, winText, usd } from '../slack/cards/win';
 
@@ -86,22 +87,51 @@ async function isSafeToAutoSend(lead: LeadRow): Promise<boolean> {
 }
 
 /** Z-T5 send_reply — always via the allowlist guard; in the same thread/channel. */
-async function sendInThread(ctx: AnyCtx, lead: LeadRow, threadId: string, channel: string, body: string, subject?: string | null) {
+/**
+ * Z-T5 send_reply — in-thread, always guarded.
+ * sendfix era (docs/verify/sendfix.md): our emails go out via /inbox/emails/compose, so Zara replies the same way,
+ * threaded with `reply_to_email_id` = our first email's Gmail id (lead_events email_sent data.ref), through Usman's
+ * guarded compose sender (TEST lead + allowlist on the graph8 contact's own address). graph8 inbox threads
+ * (`/inbox/{id}`) fall back to g8.sendReplyGuarded.
+ */
+async function sendInThread(ctx: AnyCtx, lead: LeadRow, threadId: string | null, channel: string, body: string, subject?: string | null) {
   if (lead.do_not_contact) throw new Error('lead is do-not-contact');
   const settings = ctx.settings;
-  const res = await g8.sendReplyGuarded(threadId, {
-    body, channel,
-    ...(channel === 'email' && subject ? { subject: /^re:/i.test(subject) ? subject : `Re: ${subject}` } : {}),
-    ...(channel === 'email' && settings.g8_mailbox_email ? { from_address: settings.g8_mailbox_email } : {}),
-  });
+  const subj = subject ? (/^re:/i.test(subject) ? subject : `Re: ${subject}`) : null;
+  const sentRef = channel === 'email' ? await firstSentRef(lead.id) : null;
+  let messageId: string | null = null;
+  let via = 'inbox';
+  if (sentRef && lead.g8_contact_id) {
+    const send = makeComposeSender(g8, { defaultFrom: settings.g8_mailbox_email });
+    const r = await send({
+      workspaceId: ctx.workspaceId, lead, g8ContactId: lead.g8_contact_id, g8SequenceId: '',
+      subject: subj ?? 'Re: our conversation', body, replyToEmailId: sentRef,
+      ...(settings.g8_mailbox_email ? { mailbox: { id: Number(settings.g8_mailbox_id ?? 1), email: settings.g8_mailbox_email } } : {}),
+    });
+    if (!r.ok) {
+      if (/allowlist|not a test lead/i.test(r.note ?? '')) throw new NotAllowlisted(`reply: ${r.note}`);
+      throw new Error(`compose reply failed: ${r.note ?? 'unknown'}`);
+    }
+    messageId = r.ref ?? null;
+    via = 'compose';
+  } else if (threadId) {
+    const res = await g8.sendReplyGuarded(threadId, {
+      body, channel,
+      ...(channel === 'email' && subj ? { subject: subj } : {}),
+      ...(channel === 'email' && settings.g8_mailbox_email ? { from_address: settings.g8_mailbox_email } : {}),
+    });
+    messageId = res?.data?.message_id ?? null;
+  } else {
+    throw new Error('no email thread to reply in');
+  }
   await addLeadEvent({
     workspaceId: ctx.workspaceId, leadId: lead.id, agentId: ctx.agentId, taskId: ctx.task?.id,
     type: 'reply_sent', channel: channel as Channel, direction: 'outbound',
     summary: `Zara replied in thread: ${preview(body, 120)}`,
-    data: { g8_thread_id: threadId, message_id: res?.data?.message_id ?? null },
+    data: { g8_thread_id: threadId, message_id: messageId, ref: messageId, via },
   });
-  await safeStep(ctx, 'tool', 'send_reply', `Sent in-thread ${channel} reply to ${lead.full_name}`);
-  return res;
+  await safeStep(ctx, 'tool', 'send_reply', `Sent in-thread ${channel} reply to ${lead.full_name} (${via})`);
+  return messageId;
 }
 
 // ---------------------------------------------------------------------------
@@ -183,7 +213,7 @@ async function handleReply(ctx: RunCtx): Promise<string> {
 
   // 1. Z-T1 get the reply text + thread ------------------------------------------------------------
   let thread: InboxThread | null = null;
-  let text = r.text ?? '';
+  let text = r.text ? stripQuoted(r.text) : '';
   let messageId = r.messageId;
   const contactEmail = r.email ?? (await leadEmail(lead.id));
   if (r.replyId) thread = await getThread(r.replyId, r.channel);
@@ -201,6 +231,7 @@ async function handleReply(ctx: RunCtx): Promise<string> {
   }
   const threadId = thread?.id ?? r.replyId ?? null;
   const channel = (thread?.channel ?? r.channel ?? 'email').toLowerCase();
+  const canReply = !!threadId || (channel === 'email' && !!(await firstSentRef(lead.id)));
 
   // Zara-level gate: webhook + poll can both announce the same prospect message under different keys.
   if (threadId && messageId) {
@@ -300,7 +331,7 @@ async function handleReply(ctx: RunCtx): Promise<string> {
       const when = formatSlot(booked.scheduledAt, info.timezone);
       try { await store.spend({ workspaceId: ctx.workspaceId, agentId: ctx.agentId, source: 'graph8', action: 'book_meeting', credits: 20, taskId: ctx.task.id, runId: ctx.runId }); } catch { /* ledger only */ }
       await safeStep(ctx, 'tool', 'book_meeting', `Booked discovery call for ${when}`, { g8_meeting_id: booked.meetingId });
-      if (threadId) {
+      if (canReply) {
         const body = templateDraft({ ...draftBase, intent: 'booked_confirmation', bookedLabel: when });
         try { await sendInThread(ctx, lead, threadId, channel, body, thread?.subject ?? r.subject); } catch (e) {
           await safeStep(ctx, 'note', 'send_reply', `Confirmation not sent: ${(e as Error).message}`);
@@ -319,8 +350,8 @@ async function handleReply(ctx: RunCtx): Promise<string> {
       }
     }
   }
-  if (!threadId || !safe || !AUTO_INTENTS.includes(cls.intent)) {
-    return requestReplyApproval(ctx, lead, cls, { ...draftBase, threadId, channel, subject: thread?.subject ?? r.subject, cl, safe });
+  if (!canReply || !safe || !AUTO_INTENTS.includes(cls.intent)) {
+    return requestReplyApproval(ctx, lead, cls, { ...draftBase, threadId, canReply, channel, subject: thread?.subject ?? r.subject, cl, safe });
   }
 
   if (cls.intent === 'not_now') {
@@ -352,14 +383,14 @@ async function handleReply(ctx: RunCtx): Promise<string> {
 
 async function requestReplyApproval(ctx: RunCtx, lead: LeadRow, cls: Classification, p: {
   replyText: string; firstName: string; company: string | null; founderName: string; companyName: string; bookingLink: string | null;
-  threadId: string | null; channel: string; subject?: string | null; cl: Pick<Checklist, 'set'>; safe: boolean; revision?: number;
+  threadId: string | null; canReply: boolean; channel: string; subject?: string | null; cl: Pick<Checklist, 'set'>; safe: boolean; revision?: number;
 }): Promise<string> {
   let slots: Slot[] = [];
   if (['question', 'objection', 'interested'].includes(cls.intent)) {
     try { slots = await suggestSlots(ctx.settings.g8_event_type_id ?? 1, (await workspaceInfo(ctx.workspaceId)).timezone); } catch { /* ignore */ }
   }
   const draft = await draftReply({ ...p, intent: cls.intent, slots }, { agentId: ctx.agentId, workspaceId: ctx.workspaceId, taskId: ctx.task.id });
-  const why = !p.threadId ? 'no email thread to reply in' : !p.safe ? 'contact is not on the test allowlist — drafts only' : 'needs your call';
+  const why = !p.canReply ? 'no email thread to reply in' : !p.safe ? 'contact is not on the test allowlist — drafts only' : 'needs your call';
   const blocks = replyApprovalBlocks({ leadName: lead.full_name, company: lead.company_name, intent: cls.intent, replyPreview: preview(p.replyText, 1200), draft });
   await ctx.requestApproval('send_reply', `Reply to ${lead.full_name}${lead.company_name ? ` (${lead.company_name})` : ''}`, {
     channel: p.channel as Channel, draft, slots: slots.map((s) => s.label), g8_thread_id: p.threadId ?? undefined,
@@ -512,12 +543,12 @@ export const zara: AgentBrain = {
       return;
     }
     // approved
-    if (!p.g8_thread_id) {
+    if (!p.g8_thread_id && !(await firstSentRef(lead.id))) {
       await postInThread(ctx, `⚠️ No email thread to reply in for ${lead.full_name} — please send it from graph8.`);
       return;
     }
     try {
-      await sendInThread(ctx, lead, p.g8_thread_id, p.channel ?? 'email', p.draft, p.subject);
+      await sendInThread(ctx, lead, p.g8_thread_id ?? null, p.channel ?? 'email', p.draft, p.subject);
       await postInThread(ctx, `✅ Sent your approved reply to ${lead.full_name}.`);
     } catch (e) {
       const blocked = e instanceof NotAllowlisted;
