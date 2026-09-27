@@ -146,7 +146,8 @@ export async function setupIntentTracking(ctx: RunCtx, d: Deps = live(), opts: {
   const dl = new Deadline(ONBOARD_BUDGET_MS);
   try {
     let docs = '';
-    try { docs = await readDocs(d, dl); } catch (e) { d.log.warn('intent: docs read failed', { err: errMsg(e) }); }
+    // W13: graph8 docs about another company → keywords from the target buyer only.
+    if (ctx.settings?.g8_docs_match !== false) try { docs = await readDocs(d, dl); } catch (e) { d.log.warn('intent: docs read failed', { err: errMsg(e) }); }
     const target = typeof ctx.settings?.target_persona === 'string' ? ctx.settings.target_persona : undefined;
     const plan: KeywordPlan = KeywordPlan.parse(await dl.race(d.llm.json<KeywordPlan>(keywordPrompt(docs, target), KeywordPlan as unknown as z.ZodType<KeywordPlan>, {
       agentId: ctx.agentId, workspaceId: ctx.workspaceId, taskId: ctx.task?.id, temperature: 0.3,

@@ -16,7 +16,8 @@ export async function resolveMailbox(settings: WorkspaceSettings): Promise<{ id:
 }
 
 export function scheduleId(settings: WorkspaceSettings): string | undefined {
-  return env.G8_DEMO_SCHEDULE_ID || settings.g8_schedule_id || undefined;
+  // Onboarding discovers/creates the org's 24/7 schedule (W13); the env id belongs to one org only, so it's a fallback.
+  return settings.g8_schedule_id || env.G8_DEMO_SCHEDULE_ID || undefined;
 }
 
 /**
