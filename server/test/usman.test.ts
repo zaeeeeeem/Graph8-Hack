@@ -79,6 +79,7 @@ function ctx(extra: Record<string, any> = {}) {
     requestApproval: vi.fn(async (kind: string, title: string, payload: any, blocks: any[]) => {
       const a = { id: `appr-${h.approvals.length + 1}`, kind, title, payload, blocks, sequence_id: null, decision_note: null };
       h.approvals.push(a);
+      await h.db.from('approvals').insert({ ...a }); // real runtime inserts the approvals row
       return a;
     }),
     thread: vi.fn(async () => ({ ts: '1.0', channel: 'CTEAM' })),
@@ -367,5 +368,63 @@ describe('live-verified fixes', () => {
     const create = (g8.post as any).mock.calls.find((x: any[]) => x[0] === '/sequences')[1];
     expect(create.steps.some((st: any) => st.step_type === 'HEYREACH')).toBe(false);
     expect(h.db.tables.sequences[0].steps.find((st: any) => st.channel === 'linkedin').mode).toBe('planned');
+  });
+});
+
+describe('sendfix: direct compose for every email step', () => {
+  it('compose sender: guards test flag, graph8 address and allowlist; threads replies', async () => {
+    const { makeComposeSender } = await import('../src/agents/usman/compose');
+    const g = {
+      get: vi.fn(async () => ({ data: { work_email: 'mate@example.com' } })),
+      post: vi.fn(async () => ({ data: { success: true, status: 'sent', email_id: 'gm-1' } })),
+      isAllowlisted: vi.fn(async () => true),
+    };
+    const send = makeComposeSender(g as any);
+    const base = { workspaceId: 'ws1', g8ContactId: '4', g8SequenceId: 's', subject: 'Hi', body: 'a\n\nb<c>', mailbox: { id: 1, email: 'from@example.com' } };
+    expect((await send({ ...base, lead: { is_test_contact: false } as any })).ok).toBe(false);
+    g.isAllowlisted.mockResolvedValueOnce(false);
+    expect(await send({ ...base, lead: { is_test_contact: true } as any })).toMatchObject({ ok: false, note: 'blocked by allowlist guard' });
+    g.get.mockResolvedValueOnce({ data: { work_email: '***' } });
+    expect(await send({ ...base, lead: { is_test_contact: true } as any })).toMatchObject({ ok: false, note: 'graph8 contact has no email' });
+    expect(g.post).not.toHaveBeenCalled();
+    const r = await send({ ...base, lead: { is_test_contact: true } as any, replyToEmailId: 'gm-0' });
+    expect(r).toMatchObject({ ok: true, ref: 'gm-1' });
+    expect(g.post).toHaveBeenCalledWith('/inbox/emails/compose', {
+      to: ['mate@example.com'], from_mailbox: 'from@example.com', subject: 'Hi', content: '<p>a</p><p>b&lt;c&gt;</p>', save_as_draft: false, reply_to_email_id: 'gm-0',
+    });
+  });
+
+  it('D0 at Launch, D3 as a thread reply from the scheduler at 60 s/day, stops once the lead replied', async () => {
+    let n = 0;
+    const sender = vi.fn(async () => ({ ok: true, ref: `gm-${++n}` }));
+    setFirstTouchSender(sender);
+    const c = ctx(); await usman.run(c); await usman.onApproval!(c, h.approvals[0], 'approved');
+    expect(sender).toHaveBeenCalledTimes(1);
+    const seq = h.db.tables.sequences[0];
+    expect(seq.stats.sec_per_day).toBe(60);
+    const launchedAt = new Date(seq.launched_at).getTime();
+
+    expect(await tickScheduler(new Date(launchedAt + 2 * 60_000), 'ws1')).toBe(0);
+    expect(await tickScheduler(new Date(launchedAt + 3 * 60_000 + 1), 'ws1')).toBe(1);
+    const d3 = (sender.mock.calls[1] as any)[0];
+    expect(d3).toMatchObject({ replyToEmailId: 'gm-1', g8ContactId: 'c-t' });
+    expect(d3.subject).toMatch(/^Re: /);
+    expect(d3.body).toMatch(/^Hi Test,/);
+    expect(await tickScheduler(new Date(launchedAt + 4 * 60_000), 'ws1')).toBe(0); // no double send
+
+    h.db.tables.leads.find((l: any) => l.id === 't').stage = 'replied';
+    expect(await tickScheduler(new Date(launchedAt + 10 * 60_000), 'ws1')).toBe(0);
+    expect(sender).toHaveBeenCalledTimes(2);
+    const sent = h.db.tables.lead_events.filter((e: any) => e.type === 'email_sent');
+    expect(sent.map((e: any) => [e.data.step, e.data.ref])).toEqual([[1, 'gm-1'], [2, 'gm-2']]);
+    expect(sent.every((e: any) => !/@/.test(e.summary))).toBe(true);
+  });
+
+  it('direct mode reaches a verified TEST lead even if the graph8 enroll fails', async () => {
+    setFirstTouchSender(vi.fn(async () => ({ ok: true, ref: 'gm-9' })));
+    (g8.enrollGuarded as any).mockRejectedValue(new Error('graph8 POST /sequences/x/contacts -> 400'));
+    const c = ctx(); await usman.run(c); await usman.onApproval!(c, h.approvals[0], 'approved');
+    expect(h.db.tables.sequences[0].status).toBe('live');
+    expect(h.db.tables.leads.find((l: any) => l.id === 't')).toMatchObject({ stage: 'contacted', sequence_state: 'enrolled' });
   });
 });

@@ -16,7 +16,8 @@ import { archiveSequence, createSequence, patchEmailSteps, resolveMailbox, runSe
 import { buildPlan, collectLayerSteps, emailStepData, toG8Steps, toSummary, type PlanStep } from './usman/plan';
 import { findLeadByContact, findSequenceByG8, mapG8Event, recordTouch, setTracker, getTracker, statsLine } from './usman/track';
 import { aiTemplateEnabled, errMsg, firstName, safe, scrub, secondsPerDay } from './usman/util';
-import { firstTouchSender, renderFirstName } from './usman/first-touch';
+import { directSendOn, firstTouchSender, renderFirstName, setFirstTouchSender } from './usman/first-touch';
+import { makeComposeSender } from './usman/compose';
 export { setFirstTouchSender, type FirstTouchSender, type FirstTouchInput } from './usman/first-touch';
 import { registerFire, registerScheduler } from '../scheduler';
 import { startSendPoll } from '../inbound/send-poll';
@@ -261,6 +262,13 @@ async function launch(ctx: RunCtx, approval: ApprovalRow, p: LaunchPayload): Pro
     const how = await safe(() => runSequence(p.g8_sequence_id), (e) => problems.push(`sequence not started: ${errMsg(e)}`));
     if (how) await ctx.step('tool', 'start_sequence', `graph8 sequence started via ${how}`);
   }
+  // sendfix: graph8 does not dispatch here, so email 1 goes out directly (guarded compose) to every verified TEST lead.
+  // Those leads are "active" even if the graph8 enroll failed; scheduler.ts sends D3/D9 as thread replies.
+  const direct = directSendOn(ctx.settings);
+  if (direct) {
+    const sent = await directFirstTouch(ctx, p, seq, tests, problems);
+    for (const l of sent) if (!enrolledLeads.includes(l)) enrolledLeads.push(l);
+  }
 
   const now = new Date().toISOString();
   await store.db.from('sequences').update({
@@ -281,7 +289,6 @@ async function launch(ctx: RunCtx, approval: ApprovalRow, p: LaunchPayload): Pro
       data: { g8_sequence_id: p.g8_sequence_id },
     });
   }
-  if (enrolledLeads.length) await directFirstTouch(ctx, p, seq, enrolledLeads, problems);
 
   if (problems.length && !enrolledLeads.length) {
     await mark(c, 'card', 'fail', `launch failed: ${problems[0]}`);
@@ -299,9 +306,10 @@ async function launch(ctx: RunCtx, approval: ApprovalRow, p: LaunchPayload): Pro
 }
 
 /** V3 fallback seam (see usman/first-touch.ts): email 1 sent directly when a guarded sender is registered. */
-async function directFirstTouch(ctx: RunCtx, p: LaunchPayload, seq: SequenceRow, leads: LeadRow[], problems: string[]) {
+async function directFirstTouch(ctx: RunCtx, p: LaunchPayload, seq: SequenceRow, leads: LeadRow[], problems: string[]): Promise<LeadRow[]> {
+  const sentLeads: LeadRow[] = [];
   const send = firstTouchSender();
-  if (!send || ctx.settings.usman_direct_first_touch === false) return;
+  if (!send || ctx.settings.usman_direct_first_touch === false) return sentLeads;
   const copy = SequenceCopy.parse(p.copy);
   const email = copy.emails[0];
   const mailbox = await safe(() => resolveMailbox(ctx.settings));
@@ -315,12 +323,14 @@ async function directFirstTouch(ctx: RunCtx, p: LaunchPayload, seq: SequenceRow,
         subject: renderFirstName(email.subject, fn), body: renderFirstName(email.body, fn), mailbox,
       });
       if (!r.ok) { problems.push(`direct first touch failed${r.note ? `: ${scrub(r.note)}` : ''}`); continue; }
-      await recordTouch({ workspaceId: ctx.workspaceId, agentId: ctx.agentId, kind: 'email_sent', lead, seq, stepOrder: 1, source: 'direct', extra: { direct_ref: r.ref ?? null } });
+      sentLeads.push(lead);
+      await recordTouch({ workspaceId: ctx.workspaceId, agentId: ctx.agentId, kind: 'email_sent', lead, seq, stepOrder: 1, source: 'direct', extra: { ref: r.ref ?? null, direct_ref: r.ref ?? null } });
       await ctx.step('tool', 'direct_first_touch', `email 1 sent directly to ${scrub(lead.full_name)} (TEST)`);
     } catch (e) {
       problems.push(`direct first touch failed: ${errMsg(e)}`);
     }
   }
+  return sentLeads;
 }
 
 async function revise(ctx: RunCtx, approval: ApprovalRow, p: LaunchPayload, note: string): Promise<void> {
@@ -419,6 +429,9 @@ async function inferStepOrder(lead: LeadRow, seq: SequenceRow | undefined, kind:
   for (let i = 0; i < g8Steps.length; i++) if ((g8Steps[i] as any).channel === channel && !done.has(i + 1)) return i + 1;
   return undefined;
 }
+
+// Default email path (docs/verify/sendfix.md): guarded direct compose. Tests reset/replace it.
+setFirstTouchSender(makeComposeSender(g8));
 
 // Background loops: only in the real server (not unit tests).
 if (!process.env.VITEST) {

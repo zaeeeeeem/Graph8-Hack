@@ -6,13 +6,14 @@ export const SEC_PER_REAL_DAY = 86_400;
 export const MIN_SEC_PER_DAY = 60;
 
 /**
- * `demo_time_scale` (workspace column, or settings override) is a multiplier on a real day: 1 = real days,
- * 0.000694 ≈ 60 s. Demo spec: 1 day = 60 s, so anything < 1 is clamped to at least 60 s/day.
+ * `demo_time_scale` (workspace column, or settings override) is a multiplier on a real day: 1 = real days.
+ * Demo (< 1) rounds to whole minutes, min 1: 0.001 (86 s) → 60 s, so "1 day = 1 minute" on stage.
  */
 export function secondsPerDay(scale: unknown): number {
   const n = Number(scale);
-  if (!Number.isFinite(n) || n <= 0 || n >= 1) return SEC_PER_REAL_DAY * (Number.isFinite(n) && n > 1 ? n : 1);
-  return Math.max(MIN_SEC_PER_DAY, Math.round(SEC_PER_REAL_DAY * n));
+  if (!Number.isFinite(n) || n <= 0) return SEC_PER_REAL_DAY;
+  if (n >= 1) return SEC_PER_REAL_DAY * n;
+  return MIN_SEC_PER_DAY * Math.max(1, Math.round((SEC_PER_REAL_DAY * n) / MIN_SEC_PER_DAY));
 }
 
 /** L8 switch: AI_GENERATED_TEMPLATE + `sales_hook` custom field. Off until verify-core V-T2 is green. */
