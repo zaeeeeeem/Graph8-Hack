@@ -4,7 +4,7 @@ services:
     runtime: node
     plan: starter
     region: singapore
-    branch: build
+    branch: main
     rootDir: .
     buildCommand: npm i -g pnpm@11.24.0 && pnpm install --frozen-lockfile && pnpm -C server typecheck
     startCommand: pnpm -C server start
