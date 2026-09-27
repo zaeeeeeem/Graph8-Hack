@@ -18,7 +18,7 @@ import { G8_LINKS } from './ayesha/kit';
 import { runChat } from './ayesha/chat';
 import { analysisStatus, runOnboarding } from './ayesha/onboarding';
 import { runStandup } from './ayesha/standup';
-import { errMsg, normDomain } from './ayesha/util';
+import { errMsg, normDomain, scrubPii } from './ayesha/util';
 import { PLAN_START_ACTIONS, planCard } from '../slack/cards/plan';
 import { alertCard, winCard } from '../slack/cards/standup';
 
@@ -58,9 +58,27 @@ async function runStandupTask(ctx: RunCtx): Promise<string> {
   return summary;
 }
 
+interface ChildResult { id: UUID; number: number; kind: string; status: string; result_summary: string | null }
+
+/** Wake-up after a delegated chain finished: close the loop where the founder asked (plan card thread / chat thread). */
+export async function onChildDone(ctx: RunCtx, c: ChildResult): Promise<string> {
+  const input = ctx.task.input as { channel?: string; threadTs?: string | null; planChannel?: string; planTs?: string | null };
+  const channel = input.channel ?? input.planChannel ?? 'hq';
+  const threadTs = input.threadTs ?? input.planTs ?? undefined;
+  const summary = scrubPii(c.result_summary ?? '').slice(0, 300);
+  const ok = c.status === 'done';
+  const text = ok ? `✅ T-${c.number} done${summary ? `: ${summary}` : ''}` : `⚠️ T-${c.number} ${c.status}${summary ? `: ${summary}` : ''}`;
+  await slack.postAs(ROLE, channel, { text, threadTs }).catch((e) => ctx.log.warn('wake post failed', { err: errMsg(e) }));
+  await ctx.step('note', 'child_done', `T-${c.number} ${c.status}`);
+  return text;
+}
+
 export const ayesha: AgentBrain = {
   role: ROLE,
   async run(ctx) {
+    // ctx.delegate() blocks this task on the child; the runtime re-runs us when the child chain finishes.
+    const last = (ctx.task.output as { last_child?: ChildResult } | null)?.last_child;
+    if (last && ctx.task.kind !== 'onboard') return onChildDone(ctx, last);
     switch (ctx.task.kind) {
       case 'onboard': {
         const out = await runOnboarding(ctx);
@@ -198,11 +216,43 @@ async function onMessage(e: BusEvents['slack.message']): Promise<void> {
 }
 
 async function onCron(e: BusEvents['cron.tick']): Promise<void> {
+  if (e.name === 'inbox_poll') { await pollReports(env.WORKSPACE_ID); return; }
   if (e.name !== 'standup_0900') return;
   const ws = env.WORKSPACE_ID;
   const row = await store.workspace(ws);
   if (row.status !== 'active') return;
   await runtime.enqueue(ws, ROLE, 'standup', 'Daily standup', { trigger: 'cron', daily_run: true }, { priority: 1 });
+}
+
+/**
+ * Wins / alerts written by other agents (reports table) → #sales-hq. Polled on the 15 s inbox_poll tick so the
+ * runtime needs no hook; only reports created after boot are mirrored.
+ */
+let mirrorSince = new Date().toISOString();
+const mirrored = new Set<string>();
+let polling = false;
+export async function pollReports(workspaceId: UUID): Promise<number> {
+  if (polling) return 0;
+  polling = true;
+  try {
+    const me = await store.agentByRole(workspaceId, ROLE);
+    const { data, error } = await store.db.from('reports').select('id,kind,title,body,data,from_agent_id,created_at')
+      .eq('workspace_id', workspaceId).in('kind', ['win', 'alert']).gt('created_at', mirrorSince).neq('from_agent_id', me.id)
+      .order('created_at').limit(20);
+    if (error || !data?.length) return 0;
+    const { data: agents } = await store.db.from('agents').select('id,role,name').eq('workspace_id', workspaceId);
+    const byId = new Map<string, { role: AgentRole; name: string }>((agents ?? []).map((a: any) => [a.id, { role: a.role, name: a.name }]));
+    let n = 0;
+    for (const r of data) {
+      mirrorSince = r.created_at > mirrorSince ? r.created_at : mirrorSince;
+      if (mirrored.has(r.id)) continue;
+      mirrored.add(r.id);
+      const from = byId.get(r.from_agent_id);
+      await mirrorReport({ workspaceId, fromRole: from?.role ?? 'scout', fromName: from?.name, kind: r.kind, title: r.title, body: r.body, data: r.data });
+      n++;
+    }
+    return n;
+  } finally { polling = false; }
 }
 
 async function onGraph8(e: BusEvents['graph8.event']): Promise<void> {

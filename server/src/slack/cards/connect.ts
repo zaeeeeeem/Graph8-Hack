@@ -16,7 +16,7 @@ export function connectCard(account: ConnectAccount, approvalId?: string): { tex
     text,
     blocks: [
       section(`⚠️ *${what[0].toUpperCase()}${what.slice(1)} isn't connected in graph8.*\nI'm starting with what works now and will add its steps the moment it's connected.`),
-      actions([{ text: 'Connect in graph8', url: connectUrl(account), actionId: 'connect.open', value: approvalId ?? account, style: 'primary' }]),
+      actions([{ text: 'Connect in graph8', url: connectUrl(account), actionId: 'link.connect_graph8', value: approvalId ?? account, style: 'primary' }]),
       context('One click for you, nothing else changes.'),
     ],
   };

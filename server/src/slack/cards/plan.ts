@@ -1,7 +1,8 @@
 import type { Block } from '../../contracts';
 import { actions, context, divider, fields, header, officeUrl, section } from '../../agents/ayesha/kit';
 
-export const PLAN_START_ACTIONS = ['plan.start', 'act.plan_start'] as const;
+/** W1b routes only `act.*` and `approval.*` buttons onto the bus; `plan.start` kept for older cards. */
+export const PLAN_START_ACTIONS = ['act.plan_start', 'plan.start'] as const;
 
 export interface PlanCardInput {
   company: string;

@@ -23,7 +23,7 @@ const h = vi.hoisted(() => {
     };
     const b: any = {
       select: () => b, eq: (...a: any[]) => (rec.filters.push(['eq', ...a]), b), in: (...a: any[]) => (rec.filters.push(['in', ...a]), b),
-      gte: () => b, or: (...a: any[]) => (rec.filters.push(['or', ...a]), b), order: () => b, limit: () => b, neq: () => b,
+      gte: () => b, gt: () => b, or: (...a: any[]) => (rec.filters.push(['or', ...a]), b), order: () => b, limit: () => b, neq: () => b,
       update: (v: any) => ((rec.op = 'update'), (rec.values = v), b),
       insert: (v: any) => ((rec.op = 'insert'), (rec.values = v), b),
       single: async () => { const r = result(); return { data: r.data[0] ?? null, error: null }; },
@@ -77,7 +77,7 @@ import { layers } from '../src/layers';
 import { runtime } from '../src/agents/runtime';
 import { slack } from '../src/lib/slack';
 import { store } from '../src/lib/store';
-import ayesha, { mirrorReport } from '../src/agents/ayesha';
+import ayesha, { mirrorReport, pollReports } from '../src/agents/ayesha';
 import { CANT_YET, OFF_TOPIC, settingsPatch } from '../src/agents/ayesha/chat';
 import { normDomain, scrubPii } from '../src/agents/ayesha/util';
 
@@ -159,7 +159,7 @@ describe('P1 onboarding', () => {
     expect(texts.some((t) => /LinkedIn isn't connected/.test(t))).toBe(true);
     expect(S.writes.some((w) => w.table === 'approvals' && w.values.kind === 'connect_account')).toBe(true);
     const plan = S.posts.find((p) => /Sales plan/.test(p.msg.text))!;
-    const start = plan.msg.blocks.flatMap((b: any) => b.elements ?? []).find((e: any) => e.action_id === 'plan.start');
+    const start = plan.msg.blocks.flatMap((b: any) => b.elements ?? []).find((e: any) => e.action_id === 'act.plan_start');
     expect(start.value).toBe('task-1');
     expect(S.writes.some((w) => w.table === 'workspaces' && w.values.status === 'active')).toBe(true);
     expect(c.report).toHaveBeenCalledWith('plan', expect.any(String), expect.any(String), expect.any(Object));
@@ -298,7 +298,7 @@ describe('bus wiring', () => {
     expect(vi.mocked(runtime.enqueue).mock.calls[0][2]).toBe('standup');
   });
   it('[Start] starts the daily run once', async () => {
-    const e = { actionId: 'plan.start', value: 'task-1', ctx: { ...slackCtx, messageTs: 'plan-ts' } };
+    const e = { actionId: 'act.plan_start', value: 'task-1', ctx: { ...slackCtx, messageTs: 'plan-ts' } };
     await S.handlers['slack.action'](e);
     await S.handlers['slack.action'](e);
     expect(runtime.enqueue).toHaveBeenCalledTimes(1);
@@ -348,5 +348,21 @@ describe('P2 daily run + mirror', () => {
     expect(JSON.stringify(S.posts[0].msg.blocks)).toContain('Open in graph8');
     await mirrorReport({ workspaceId: 'ws-1', fromRole: 'scout', kind: 'handoff', title: 'x' });
     expect(S.posts).toHaveLength(1);
+  });
+  it('wake after delegated chain closes the loop instead of delegating again', async () => {
+    const c = ctx('answer_question', { text: 'find 15 more', channel: 'D1', threadTs: 'th-1' });
+    c.task.output = { last_child: { id: 'c1', number: 7, kind: 'find_prospects', status: 'done', result_summary: 'Found 15 prospects' } };
+    const out = await ayesha.run(c);
+    expect(out).toBe('✅ T-7 done: Found 15 prospects');
+    expect(c.delegate).not.toHaveBeenCalled();
+    expect(llm.json).not.toHaveBeenCalled();
+    expect(S.posts[0].msg.threadTs).toBe('th-1');
+  });
+  it('polls other agents\' win/alert reports once', async () => {
+    S.tables.reports = [{ id: 'r1', kind: 'win', title: 'Meeting booked', body: null, data: { amount: 5000 }, from_agent_id: 'ag-closer', created_at: '2999-01-01T00:00:00Z' }];
+    S.tables.agents = [{ id: 'ag-closer', role: 'closer', name: 'Zara' }];
+    expect(await pollReports('ws-1')).toBe(1);
+    expect(await pollReports('ws-1')).toBe(0);
+    expect(S.posts[0].msg.text).toContain('Meeting booked');
   });
 });

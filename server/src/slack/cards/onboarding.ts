@@ -13,7 +13,7 @@ export const ONBOARD_ITEMS: ChecklistItem[] = [
 export const PLAN_ITEM: ChecklistItem = { key: 'plan', label: 'Plan ready in #sales-hq', state: 'todo' };
 
 export function onboardTitle(domain: string): string {
-  return `On it, hiring your sales team for ${domain} 👀`;
+  return `Setting up your sales team for ${domain}`;
 }
 
 /** D19: /hire-sales when the team already exists. */
