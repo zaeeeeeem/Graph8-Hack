@@ -3,6 +3,7 @@
  *   P1 onboard      /hire-sales <domain>         → agents/ayesha/onboarding.ts
  *   P2 daily run    [Start] on plan card, 09:00  → delegate Bilal find_prospects (handoffs carry it on)
  *   P3 chat         DM / @mention / thread reply → agents/ayesha/chat.ts
+ *                   "Bilal, …" / "hey Zara …"       → that agent answers in its own voice: agents/ayesha/crew.ts
  *   P4 standup      /sales-standup, 09:00 cron   → agents/ayesha/standup.ts
  * Bus wiring (Slack commands, buttons, messages, cron, graph8 intelligence events) lives in `wireAyesha()`.
  */
@@ -17,6 +18,7 @@ import { store } from '../lib/store';
 import { runtime } from './runtime';
 import { G8_LINKS } from './ayesha/kit';
 import { runChat } from './ayesha/chat';
+import { runCrewChat } from './ayesha/crew';
 import { analysisStatus, runOnboarding } from './ayesha/onboarding';
 import { runStandup } from './ayesha/standup';
 import { errMsg, normDomain, scrubPii } from './ayesha/util';
@@ -204,18 +206,28 @@ async function onAction(e: BusEvents['slack.action']): Promise<void> {
 }
 
 /** Thread replies on another agent's approval card are routed by the runtime (Edit notes), not by Ayesha. */
-async function isOthersApprovalThread(workspaceId: UUID, threadTs?: string): Promise<boolean> {
-  if (!threadTs) return false;
-  const { data } = await store.db.from('approvals').select('id,kind,requested_by_agent_id').eq('workspace_id', workspaceId).eq('slack_ts', threadTs).maybeSingle();
-  if (!data) return false;
+/** Another agent's approval card thread: 'edit' = the runtime is waiting for the founder's note there. */
+async function othersApprovalThread(workspaceId: UUID, threadTs?: string): Promise<null | 'edit' | 'card'> {
+  if (!threadTs) return null;
+  const { data } = await store.db.from('approvals').select('id,kind,status,requested_by_agent_id').eq('workspace_id', workspaceId).eq('slack_ts', threadTs).maybeSingle();
+  if (!data) return null;
   const me = await store.agentByRole(workspaceId, ROLE);
-  return data.requested_by_agent_id !== me.id;
+  if (data.requested_by_agent_id === me.id) return null;
+  return data.status === 'edit_requested' ? 'edit' : 'card';
 }
 
 async function onMessage(e: BusEvents['slack.message']): Promise<void> {
   const c = e.ctx;
-  if (e.kind === 'thread_reply' && await isOthersApprovalThread(c.workspaceId, c.threadTs)) return;
+  if (e.kind === 'thread_reply') {
+    const other = await othersApprovalThread(c.workspaceId, c.threadTs);
+    // Edit note → runtime. Un-named chatter on another agent's card stays ignored; a named ask is answered.
+    if (other === 'edit' || (other === 'card' && !e.addressed)) return;
+  }
   const text = e.text.replace(/<@[A-Z0-9]+>/g, '').trim();
+  if (e.addressed && e.addressed !== ROLE) {
+    await runCrewChat({ role: e.addressed, text, ctx: c, kind: e.kind });
+    return;
+  }
   await runtime.enqueue(c.workspaceId, ROLE, 'answer_question', `Chat: ${text.slice(0, 60)}`, {
     text, kind: e.kind, channel: c.channel, threadTs: c.threadTs ?? c.messageTs ?? null,
   }, { priority: 1, slack: c });
