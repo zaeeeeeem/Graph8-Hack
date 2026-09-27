@@ -49,6 +49,8 @@ export interface NormalizedVoice {
   kind: 'voice';
   eventType: string;
   contactId: string | null;
+  /** Our lead id — the voice layer (W9) sends lead_id rather than contact_id. */
+  leadId?: string | null;
   disposition: string;
   summary: string | null;
   callId: string | null;
@@ -101,7 +103,7 @@ export function normalize(type: string, payload: JsonObject): NormalizedEvent | 
   }
   if (t === VOICE_OUTCOME_EVENT) {
     return {
-      kind: 'voice', eventType: t, contactId: str(d.contact_id), disposition: String(d.disposition ?? 'unknown').toLowerCase(),
+      kind: 'voice', eventType: t, contactId: str(d.contact_id), leadId: str(d.lead_id), disposition: String(d.disposition ?? 'unknown').toLowerCase(),
       summary: str(d.summary), callId: str(d.call_id ?? d.room_name), scheduledAt: str(d.scheduled_at ?? d.callback_at),
     };
   }

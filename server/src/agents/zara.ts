@@ -419,7 +419,7 @@ async function onMeetingEvent(ctx: EventCtx, m: NormalizedMeeting) {
 }
 
 async function onVoiceEvent(ctx: EventCtx, v: NormalizedVoice) {
-  const lead = await resolveLead(ctx.workspaceId, v.contactId, null);
+  const lead = await resolveLead(ctx.workspaceId, v.contactId, null, v.leadId);
   if (!lead) return;
   const action = mapDisposition(v.disposition);
   const summary = v.summary ? preview(v.summary, 200) : undefined;

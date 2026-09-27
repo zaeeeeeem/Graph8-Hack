@@ -369,7 +369,7 @@ async function onSlackMessage(e: BusEvents['slack.message']) {
 }
 
 // ---------------------------------------------------------------------------------------------- graph8 events
-const ZARA_EVENTS = /repl(y|ied)|meeting\.|voice_ai\.|call_|booking|inbox|unsubscri|opt_?out|opted_out/i;
+const ZARA_EVENTS = /repl(y|ied)|meeting\.|voice_ai\.|voice\.|call_|booking|inbox|unsubscri|opt_?out|opted_out/i;
 const USMAN_EVENTS = /_sent$|bounced|opened|clicked|skipped|sequence\./i;
 
 async function onGraph8Event(e: BusEvents['graph8.event']) {
