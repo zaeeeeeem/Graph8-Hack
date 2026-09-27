@@ -178,9 +178,13 @@ describe('hira.run', () => {
     expect(c.report.mock.calls[0][2]).not.toMatch(PII);
     expect(summary).toMatch(/5 researched \(\+1 TEST\), \d emails usable, 1 replaced/);
 
-    const card = m.slack.postAs.mock.calls.at(-1)!;
+    const card = m.slack.postAs.mock.calls.find((c: any[]) => c[2].blocks)!;
     expect(card[2].threadTs).toBe('222.2');
     expect(JSON.stringify(card[2])).not.toMatch(PII);
+    // wrap-up status line in the agent's voice (Gemini mocked out here, so the template)
+    const line = m.slack.postAs.mock.calls.at(-1)![2];
+    expect(line.blocks).toBeUndefined();
+    expect(line.text).toMatch(/Researched \d+ leads/);
   });
 
   it('hands over after the wait cap with pending leads (H8), never disqualifying them', async () => {
