@@ -17,7 +17,7 @@ import { writeHook, type Hook } from './hira/hook';
 const LAYER_MS = 30_000;
 const MAX_BACKFILL_ROUNDS = 2;
 
-export interface HiraInput { lead_ids?: UUID[]; backfill_lead_ids?: UUID[]; test_lead_ids?: UUID[]; list_id?: string | number; persona_label?: string }
+export interface HiraInput { lead_ids?: UUID[]; backfill_lead_ids?: UUID[]; test_lead_ids?: UUID[]; list_id?: string | number; test_list_id?: string | number | null; persona_label?: string }
 
 export interface Work {
   lead: LeadRow;
@@ -126,12 +126,16 @@ async function applyContact(w: Work) {
 export async function researchRound(ctx: RunCtx, works: Work[], listId: string | number | undefined, pr: Progress, env: { offer?: string; suppressed: Set<string>; warnings: string[] }): Promise<void> {
   // R1a unlock what graph8 already holds (CRM contacts come back masked `***`; ~1 credit each, reveals email + mobile).
   const inCrm = works.filter((w) => !w.lead.is_test_contact && w.lead.g8_contact_id && !w.email);
-  if (inCrm.length) {
+  // Unlock is billed even when graph8 holds nothing (live: 5 credits → 0 emails), so only unlock people whose search
+  // row showed a masked email/phone (Bilal stores has_email/has_phone; unknown = try).
+  const r = (w: Work) => (w.lead.research ?? {}) as { has_email?: boolean; has_phone?: boolean };
+  const unlockable = inCrm.filter((w) => r(w).has_email !== false || r(w).has_phone !== false);
+  if (unlockable.length) {
     try {
-      const u = await unlockContacts(inCrm.map((w) => w.lead.g8_contact_id!));
-      await spendAction(ctx, 'unlock_contacts', u.credits, { contacts: inCrm.length });
-      await pool(inCrm, 5, applyContact);
-      await ctx.step('tool', 'unlock_contacts', `Unlocked ${inCrm.length} contacts (${u.credits} credits), ${inCrm.filter((w) => w.email).length} emails revealed`, { n: inCrm.length, credits: u.credits });
+      const u = await unlockContacts(unlockable.map((w) => w.lead.g8_contact_id!));
+      await spendAction(ctx, 'unlock_contacts', u.credits, { contacts: unlockable.length });
+      await pool(unlockable, 5, applyContact);
+      await ctx.step('tool', 'unlock_contacts', `Unlocked ${unlockable.length} contacts (${u.credits} credits), ${unlockable.filter((w) => w.email).length} emails revealed`, { n: unlockable.length, credits: u.credits });
     } catch (e) {
       env.warnings.push(`unlock failed: ${errMsg(e)}`);
     }
@@ -367,6 +371,8 @@ async function run(ctx: RunCtx): Promise<string> {
   await ctx.delegate('sdr', 'build_sequence', `Build sequence for ${ok.length} researched leads${input.persona_label ? ` · ${input.persona_label}` : ''}`.slice(0, 120), {
     lead_ids: okReal.map((w) => w.lead.id), test_lead_ids: ok.filter((w) => w.lead.is_test_contact).map((w) => w.lead.id),
     pending_lead_ids: ok.filter((w) => w.pending).map((w) => w.lead.id), list_id: listId != null ? String(listId) : null,
+    // Only this list may back a graph8 sequence run (it holds allowlisted teammates only).
+    test_list_id: input.test_list_id != null ? String(input.test_list_id) : null,
     persona_label: input.persona_label ?? null,
   });
   await pr.set('handoff', 'done');

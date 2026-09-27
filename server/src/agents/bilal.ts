@@ -263,8 +263,13 @@ async function run(ctx: RunCtx): Promise<string> {
   const tests = await loadTestContacts(ctx.workspaceId);
   const saved = await assertIntoList(listId, top.map(assertBody));
   let testSaved = { created: 0, updated: 0, errors: 0 };
+  // TEST teammates get their OWN list: graph8 `/run` enrolls a sequence's whole associated list (verify core.md),
+  // so real prospects and contactable teammates must never share one.
+  let testListId: string | null = null;
+  let testMembers: any[] = [];
   if (tests.length) {
-    testSaved = await assertIntoList(listId, tests.map((t) => {
+    testListId = await createList(`Sales Team · TEST contacts · ${todayLabel()}`, 'Allowlisted teammates only — the only contacts sequences may enroll.');
+    testSaved = await assertIntoList(testListId, tests.map((t) => {
       const n = splitName(t.label);
       const o: JsonObject = { first_name: n.first, last_name: n.last, job_title: 'TEST contact', company_name: 'TEST (team)' };
       if (t.email) o.work_email = t.email;
@@ -274,7 +279,8 @@ async function run(ctx: RunCtx): Promise<string> {
     }));
   }
   const members = await listMembers(listId);
-  await ctx.step('tool', 'save_leads', `Saved ${top.length} prospects to graph8 list ${listId} (created ${saved.created}, updated ${saved.updated}, errors ${saved.errors})${tests.length ? ` + ${tests.length} TEST` : ''}`, { list_id: listId, ...saved, tests: testSaved });
+  if (testListId) testMembers = await listMembers(testListId);
+  await ctx.step('tool', 'save_leads', `Saved ${top.length} prospects to graph8 list ${listId} (created ${saved.created}, updated ${saved.updated}, errors ${saved.errors})${tests.length ? ` + ${tests.length} TEST` : ''}`, { list_id: listId, test_list_id: testListId, ...saved, tests: testSaved });
 
   // 5. Supabase mirror
   const rows = top.map((p, i) => {
@@ -286,7 +292,7 @@ async function run(ctx: RunCtx): Promise<string> {
       source: p.signals.length ? 'signal' : 'scout', stage: 'prospect', fit_score: p.fit_score ?? null, signals: p.signals,
       is_test_contact: false,
       research: {
-        rank: i + 1, reason: p.reason ?? '', confidence: p.confidence_score, breakdown: p.breakdown ?? {},
+        rank: i + 1, reason: p.reason ?? '', confidence: p.confidence_score, breakdown: p.breakdown ?? {}, has_email: p.has_email, has_phone: p.has_phone,
         seniority: p.seniority_level, industry: p.company_industry, size: p.company_employee_count,
         find_task_id: ctx.task.id, handoff: i < handoffN ? 'hira' : 'backfill',
       } as JsonObject,
@@ -294,10 +300,10 @@ async function run(ctx: RunCtx): Promise<string> {
   });
   const testRows = tests.map((t) => {
     const n = splitName(t.label);
-    const m = matchMember(members, { email: t.email, linkedin: normLinkedin(t.linkedin), first: n.first, last: n.last });
+    const m = matchMember(testMembers, { email: t.email, linkedin: normLinkedin(t.linkedin), first: n.first, last: n.last });
     return {
       workspace_id: ctx.workspaceId, owner_agent_id: ctx.agentId, g8_contact_id: m.g8ContactId, g8_company_id: m.g8CompanyId,
-      g8_list_id: listId, full_name: t.label, job_title: 'TEST contact', company_name: 'TEST (team)', company_domain: null,
+      g8_list_id: testListId, full_name: t.label, job_title: 'TEST contact', company_name: 'TEST (team)', company_domain: null,
       location: null, source: 'manual', stage: 'prospect', fit_score: null, signals: [], is_test_contact: true,
       research: { label: 'TEST', find_task_id: ctx.task.id, handoff: 'hira' } as JsonObject,
     };
@@ -321,7 +327,7 @@ async function run(ctx: RunCtx): Promise<string> {
       summary: `Found by Bilal · fit ${p.fit_score} · ${p.job_title || 'role n/a'} at ${p.company_name || 'n/a'}`.slice(0, 200),
       data: { fit_score: p.fit_score ?? null, rank: i + 1, list_id: listId } })),
     ...tests.map((t, i) => ({ workspace_id: ctx.workspaceId, lead_id: testLeadIds[i], agent_id: ctx.agentId, task_id: ctx.task.id, type: 'found', channel: 'system', direction: 'internal',
-      summary: 'Added as TEST lead (team, allowlisted)', data: { test: true, list_id: listId } })),
+      summary: 'Added as TEST lead (team, allowlisted)', data: { test: true, list_id: testListId } })),
   ].filter((e) => e.lead_id);
   if (events.length) {
     const { error: e3 } = await store.db.from('lead_events').insert(events);
@@ -355,9 +361,10 @@ async function run(ctx: RunCtx): Promise<string> {
     found: top.length, strong, widened: plan.widened, list_id: listId, persona_label: plan.label, test_leads: tests.length,
   });
   await pr.set('handoff', 'doing');
-  await store.db.from('tasks').update({ output: { ...(ctx.task.output ?? {}), handoff_summary: body, list_id: listId, lead_ids: leadIds, test_lead_ids: testLeadIds } }).eq('id', ctx.task.id);
+  await store.db.from('tasks').update({ output: { ...(ctx.task.output ?? {}), handoff_summary: body, list_id: listId, test_list_id: testListId, lead_ids: leadIds, test_lead_ids: testLeadIds } }).eq('id', ctx.task.id);
   await ctx.delegate('researcher', 'research_leads', `Research top ${handoffTop.length} leads · ${plan.label}`.slice(0, 120), {
-    lead_ids: handoffTop, backfill_lead_ids: backfill, test_lead_ids: testLeadIds, list_id: listId, persona, persona_label: plan.label,
+    lead_ids: handoffTop, backfill_lead_ids: backfill, test_lead_ids: testLeadIds, list_id: listId, test_list_id: testListId,
+    persona, persona_label: plan.label,
   });
   await pr.set('handoff', 'done');
   return body;

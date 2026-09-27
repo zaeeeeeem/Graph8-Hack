@@ -23,6 +23,9 @@ export interface Prospect {
   state: string;
   linkedin_url: string;
   confidence_score: number;
+  /** graph8 holds a (masked `***`) work email / phone for this person → unlock can reveal it (live 10:25 PKT). */
+  has_email: boolean;
+  has_phone: boolean;
   signals: LeadSignal[];
   fit_score?: number;
   reason?: string;
@@ -48,6 +51,8 @@ export function toProspect(row: Record<string, any>): Prospect {
     state: s(row.state),
     linkedin_url: normLinkedin(s(row.linkedin_url)),
     confidence_score: typeof row.confidence_score === 'number' ? row.confidence_score : 0,
+    has_email: !!(row.work_email && String(row.work_email).trim()),
+    has_phone: !!((row.mobile_phone && String(row.mobile_phone).trim()) || (row.direct_phone && String(row.direct_phone).trim())),
     signals: [],
   };
 }
@@ -106,8 +111,10 @@ export function reasonFor(p: Prospect): string {
  * Input must be deduped. Output sorted by fit desc (ties: confidence, then name for determinism).
  */
 export function rank(ps: Prospect[], n: number, perCompany = 2, minConfidence = 50): Prospect[] {
+  // Ties on fit: prefer people graph8 can actually unlock an email/phone for (unlock of an empty record returns null).
+  const reach = (p: Prospect) => (p.has_email ? 2 : 0) + (p.has_phone ? 1 : 0);
   const sorted = [...ps].sort((a, b) => (b.fit_score ?? 0) - (a.fit_score ?? 0)
-    || b.confidence_score - a.confidence_score || a.full_name.localeCompare(b.full_name));
+    || reach(b) - reach(a) || b.confidence_score - a.confidence_score || a.full_name.localeCompare(b.full_name));
   const perCo = new Map<string, number>();
   const take = (p: Prospect) => {
     const co = p.company_domain || p.company_name.toLowerCase() || p.full_name;

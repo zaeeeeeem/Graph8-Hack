@@ -227,6 +227,38 @@ describe('bilal.run', () => {
     expect(db.tables.tasks[0].output.handoff_summary).toContain('Found 10');
   });
 
+  it('puts TEST teammates in their own list and hands test_list_id on', async () => {
+    let n = 76;
+    m.g8.post.mockImplementation(async (path: string, body: any) => {
+      if (path === '/search/contacts') return { data: Array.from({ length: 12 }, (_, i) => row(i + 1)), pagination: { total: 12 } };
+      if (path === '/lists') return { data: { id: ++n, title: body.title } };
+      throw new Error(path);
+    });
+    m.g8.get.mockImplementation(async (path: string) => {
+      if (path === '/contacts/suppressions' || path === '/contacts') return { data: [] };
+      if (path === '/lists/77/contacts') return { data: [{ id: 1001, first_name: 'First1', last_name: 'Last1', linkedin_url: 'linkedin.com/in/p1' }] };
+      if (path === '/lists/78/contacts') return { data: [{ id: 999, first_name: 'Zaeem', last_name: '(team)', work_email: 'zaeem@example.com' }] };
+      throw new Error(path);
+    });
+    const c = ctx();
+    await bilal.run(c);
+    const titles = m.g8.post.mock.calls.filter((x) => x[0] === '/lists').map((x) => x[1].title);
+    expect(titles[1]).toMatch(/TEST contacts/);
+    const testAssert = m.g8.put.mock.calls.find((x) => x[1].list_id === 78)!;
+    expect(testAssert[1].contacts).toHaveLength(1);
+    expect(m.g8.put.mock.calls.find((x) => x[1].list_id === 77)![1].contacts.every((x: any) => !x.work_email)).toBe(true);
+    expect(db.tables.leads.find((l) => l.is_test_contact)!.g8_list_id).toBe('78');
+    expect(c.delegate.mock.calls[0][3].test_list_id).toBe('78');
+  });
+
+  it('prefers prospects graph8 holds an email for when fit ties', () => {
+    const a = score(toProspect(row(1, { work_email: '' })), plan());
+    const b = score(toProspect(row(2, { work_email: '***', confidence_score: 10 })), plan());
+    expect(rank([a, b], 1)[0].full_name).toBe('First1 Last1'); // B13 confidence tier first
+    const c2 = score(toProspect(row(3, { work_email: '***' })), plan());
+    expect(rank([a, c2], 1)[0].full_name).toBe('First3 Last3');
+  });
+
   it('does not re-add TEST leads on later runs', async () => {
     db.tables.leads.push({ id: 't0', workspace_id: WS, full_name: 'Zaeem', is_test_contact: true });
     await bilal.run(ctx());
