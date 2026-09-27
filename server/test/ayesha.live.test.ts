@@ -52,6 +52,7 @@ describe.skipIf(!live)('ayesha live (TEST workspace, Slack faked)', () => {
     console.log('SETTINGS', JSON.stringify({ ...s, g8_mailbox_email: s.g8_mailbox_email ? '<set>' : null }));
     expect(s.g8_pipeline_id).toBe('b7fef03e-06d9-440c-bd12-367e6eaf08de');
     expect(s.g8_event_type_id).toBe(1);
+    expect(s.g8_booking_url).toBe('https://app.graph8.com/appointments/team/hackathon-zaeemulhassanyt/discovery-call/1');
 
     for (const text of ["how's the pipeline looking?", 'what is the weather in Lahore?', 'can you run facebook ads for us?', 'from now on find 12 leads a day']) {
       const t = await runtime.enqueue(ws, 'head_of_sales', 'answer_question', `Chat: ${text}`, { text, kind: 'dm', channel: 'D_TEST', threadTs: 'm1' }, { slack: sctx });

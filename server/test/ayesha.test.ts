@@ -88,7 +88,8 @@ const G8_OK: Record<string, any> = {
     { id: 'd3', display_name: 'Draft', file_type: 'x', status: 'processing', content: 'x' },
   ] },
   '/deals/pipelines': { data: [{ id: 'pipe-1', name: 'Sales Pipeline', is_default: true, stages: [{ id: 'st-0', name: 'Lead' }, { id: 'st-nm', name: 'New Meeting' }] }] },
-  '/event-types': { data: [{ id: 1, title: 'Discovery call' }] },
+  '/event-types': { data: [{ id: 1, title: 'Discovery call', slug: 'discovery-call' }] },
+  '/org/settings': { data: { org_id: 'org_x', org_name: 'Hackathon zaeemulhassanyt', metadata: { org_slug: 'hackathon-zaeemulhassanyt' } } },
   '/mailboxes': { data: [{ id: '1', email: 'owner@example.com', connection_status: 'active', is_archived: false, daily_limit: 40 }] },
   '/workflows/integrations/linkedin/senders': { senders: [], total_count: 0 },
   '/linkedin/connection': { data: { connected: false } },
@@ -143,6 +144,7 @@ describe('P1 onboarding', () => {
     const patch = Object.assign({}, ...vi.mocked(store.patchSettings).mock.calls.map((x) => x[1]));
     expect(patch).toMatchObject({
       g8_pipeline_id: 'pipe-1', g8_stage_new_meeting_id: 'st-nm', g8_event_type_id: 1, g8_mailbox_id: 1,
+      g8_booking_url: 'https://app.graph8.com/appointments/team/hackathon-zaeemulhassanyt/discovery-call/1',
       g8_schedule_id: 'sched-1', target_persona: PICK.target_persona, channels: { email: true, phone: true, linkedin: false },
     });
     expect(patch.onboarded_at).toBeTruthy();

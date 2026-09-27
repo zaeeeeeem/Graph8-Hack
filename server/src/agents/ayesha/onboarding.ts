@@ -99,10 +99,23 @@ export async function findPipeline(): Promise<{ pipelineId: string; name: string
   return { pipelineId: String(pick.id), name: String(pick.name), stageId: stage ? String(stage.id) : undefined };
 }
 
-export async function findMeetingType(): Promise<{ id: number; title: string } | null> {
+export async function findMeetingType(): Promise<{ id: number; title: string; slug: string } | null> {
   const list = unwrap<any[]>(await withTimeout(g8.get('/event-types'), G8_TIMEOUT_MS, 'event-types')) ?? [];
   const pick = list.find((e) => /discovery/i.test(String(e.title ?? ''))) ?? list[0];
-  return pick ? { id: Number(pick.id), title: String(pick.title) } : null;
+  return pick ? { id: Number(pick.id), title: String(pick.title), slug: String(pick.slug ?? slugify(String(pick.title))) } : null;
+}
+
+const slugify = (s: string) => s.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+
+/**
+ * Public booking link (docs/verify/core.md V-B1): `/embed` has no URL; the page is
+ * https://app.graph8.com/appointments/team/{org-slug}/{event-slug}/{event_type_id}.
+ * Org slug: GET /org/settings → data.metadata.org_slug, else slugified data.org_name.
+ */
+export async function bookingUrl(ev: { id: number; slug: string }): Promise<string | null> {
+  const org = unwrap<any>(await withTimeout(g8.get('/org/settings'), G8_TIMEOUT_MS, 'org/settings')) ?? {};
+  const orgSlug = String(org.metadata?.org_slug ?? org.org_slug ?? '') || slugify(String(org.org_name ?? ''));
+  return orgSlug && ev.slug ? `https://app.graph8.com/appointments/team/${orgSlug}/${ev.slug}/${ev.id}` : null;
 }
 
 export interface Channels {
@@ -246,7 +259,12 @@ export async function runOnboarding(ctx: RunCtx): Promise<string> {
   await cl.set('meeting', 'doing');
   try {
     const m = await findMeetingType();
-    if (m) { patch.g8_event_type_id = m.id; await cl.set('meeting', 'done', m.title); }
+    if (m) {
+      patch.g8_event_type_id = m.id;
+      const url = await bookingUrl(m).catch((e) => { ctx.log.warn('booking url failed', { err: errMsg(e) }); return null; });
+      if (url) patch.g8_booking_url = url;
+      await cl.set('meeting', 'done', url ? `${m.title} · booking link ready` : m.title);
+    }
     else await cl.set('meeting', 'warn', 'no meeting type, connect Google Calendar in graph8');
     await ctx.step('tool', 'setup_meeting_type', m ? m.title : 'none', { eventTypeId: m?.id ?? null });
   } catch (e) { await cl.set('meeting', 'warn', errMsg(e)); }
