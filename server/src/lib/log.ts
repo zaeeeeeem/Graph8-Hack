@@ -5,7 +5,7 @@
 import type { Logger } from '../contracts';
 
 const EMAIL = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
-const PHONE = /\+?\d[\d\s().-]{8,}\d/g;
+const PHONE = /(?<![\w-])\+?\d[\d\s().-]{8,}\d(?![\w-])/g; // not inside UUIDs/ids
 const SECRET = /\b(xox[abp]-[\w-]+|xapp-[\w-]+|sk-[\w-]{10,}|AIza[\w-]{20,}|eyJ[\w-]{20,}\.[\w-]+\.[\w-]+|Bearer\s+[\w.-]+)/g;
 const SECRET_KEYS = /(key|token|secret|password|authorization)/i;
 

@@ -37,7 +37,7 @@ export async function safe<T>(fn: () => Promise<T> | T, onErr?: (e: unknown) => 
 }
 
 const EMAIL_RE = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi;
-const PHONE_RE = /\+?\d[\d\s().-]{7,}\d/g;
+const PHONE_RE = /(?<![\w-])\+?\d[\d\s().-]{7,}\d(?![\w-])/g;
 /** Last line of defence for text going to Slack / reports / lead_events summaries. */
 export function scrub(s: string): string {
   return s.replace(EMAIL_RE, '[email]').replace(PHONE_RE, '[phone]');

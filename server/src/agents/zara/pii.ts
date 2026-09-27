@@ -1,6 +1,6 @@
 /** PII scrubbing for anything that leaves the server (Slack, reports, lead_events summaries, logs). */
 const EMAIL = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi;
-const PHONE = /(?:\+?\d[\d\s().-]{7,}\d)/g;
+const PHONE = /(?<![\w-])\+?\d[\d\s().-]{7,}\d(?![\w-])/g;
 const URL_WITH_EMAIL = /mailto:[^\s>]+/gi;
 
 export function scrub(text: string | null | undefined): string {

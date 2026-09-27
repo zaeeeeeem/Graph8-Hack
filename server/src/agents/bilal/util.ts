@@ -59,7 +59,7 @@ export function errMsg(e: unknown): string {
 }
 
 const EMAIL_RE = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi;
-const PHONE_RE = /\+?\d[\d\s().-]{7,}\d/g;
+const PHONE_RE = /(?<![\w-])\+?\d[\d\s().-]{7,}\d(?![\w-])/g;
 /** Strip emails/phones from any string that may end up in Slack, reports, run_steps or lead_events. */
 export function scrubPii(s: string): string {
   return s.replace(EMAIL_RE, '[email]').replace(PHONE_RE, '[phone]');
