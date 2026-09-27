@@ -126,8 +126,11 @@ function startHttp() {
       : Promise.resolve(json(res, 404, { error: 'not found' }));
     p.catch((err) => { log.error('http handler failed', { err }); if (!res.headersSent) json(res, 500, { error: 'internal' }); });
   });
-  server.listen(env.PORT, () => log.info(`http listening on :${env.PORT}`));
-  return server;
+  // Resolves once bound; rejects on EADDRINUSE so a second instance dies BEFORE runtime recovery / Slack connect.
+  return new Promise<typeof server>((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(env.PORT, () => { server.off('error', reject); log.info(`http listening on :${env.PORT}`); resolve(server); });
+  });
 }
 
 // ------------------------------------------------------------------------------------------------ cron
@@ -158,13 +161,14 @@ async function main() {
   const wsId = env.WORKSPACE_ID;
   const ws = await store.workspace(wsId);
   log.info(`serving workspace "${ws.name}" (${ws.is_demo ? 'demo' : 'test/real'}) ${wsId}`);
+  // Bind first: if another instance already owns the port, exit before touching tasks or opening a Slack socket.
+  await startHttp();
   await loadBrains();
   const files = await autoloadLayers(join(here, 'layers'));
   log.info(`layers: ${files.length} file(s), enabled: ${layers.all().map((l) => l.name).join(', ') || 'none'}`);
   try { await loadSlack(); } catch (err) { log.error('slack failed to start; continuing without it', { err }); }
   await runtime.start();
   await startLayers();
-  startHttp();
   startCron(ws.timezone || 'Asia/Karachi', ws.standup_hour ?? 9);
 }
 

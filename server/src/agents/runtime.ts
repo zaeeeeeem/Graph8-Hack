@@ -34,8 +34,38 @@ const brains = new Map<AgentRole, AgentBrain>();
 const queues = new Map<UUID, Promise<unknown>>();
 let slack: SlackPort | null = null;
 
+/**
+ * BUILD-PLAN §9: when the served workspace is not the demo (is_demo=false) every Slack post is marked "[test] ".
+ * The port object is patched IN PLACE, so brains that import `slack` directly get the marker too. Idempotent.
+ */
+export const TEST_PREFIX = '[test] ';
+export function withTestPrefix(port: SlackPort, isTest: () => Promise<boolean>): SlackPort {
+  const p = port as SlackPort & { __testPrefixed?: boolean };
+  if (p.__testPrefixed) return port;
+  p.__testPrefixed = true;
+  const pre = (t: string) => (t.startsWith(TEST_PREFIX) ? t : TEST_PREFIX + t);
+  const marker: Block = { type: 'context', elements: [{ type: 'mrkdwn', text: '🧪 *[test]* test workspace, not the live demo' }] };
+  const mark = (blocks?: Block[]) =>
+    blocks && !blocks.some((b) => b === marker || (b as any).block_id === 'graphi_test_marker') ? [{ ...marker, block_id: 'graphi_test_marker' }, ...blocks] : blocks;
+  const { postAs, update, checklist, agentThread, approvalCard, dm } = port;
+  p.postAs = async (role, channel, msg) => (await isTest()) ? postAs(role, channel, { ...msg, text: pre(msg.text), blocks: mark(msg.blocks) }) : postAs(role, channel, msg);
+  p.update = async (channel, ts, msg) => (await isTest()) ? update(channel, ts, { ...msg, text: pre(msg.text), blocks: mark(msg.blocks) }) : update(channel, ts, msg);
+  p.dm = async (userId, msg) => (await isTest()) ? dm(userId, { ...msg, text: pre(msg.text), blocks: mark(msg.blocks) }) : dm(userId, msg);
+  p.agentThread = async (role, title) => agentThread(role, (await isTest()) ? pre(title) : title);
+  p.approvalCard = async (role, a) => approvalCard(role, (await isTest()) ? { ...a, title: pre(a.title) } : a);
+  p.checklist = async (role, channel, title, items, threadTs) => {
+    const test = await isTest();
+    const c = await checklist(role, channel, test ? pre(title) : title, items, threadTs);
+    if (test) { const t = c.title.bind(c); c.title = (x) => t(pre(x)); }
+    return c;
+  };
+  return port;
+}
+
 export function attachSlack(port: SlackPort) {
-  slack = port;
+  let cached: Promise<boolean> | null = null;
+  const isTest = () => (cached ??= store.workspace(env.WORKSPACE_ID).then((w) => !w.is_demo).catch(() => false));
+  slack = withTestPrefix(port, isTest);
 }
 
 /** Chain work onto the agent's queue so runs of one agent never overlap. */
@@ -339,7 +369,7 @@ async function onSlackMessage(e: BusEvents['slack.message']) {
 }
 
 // ---------------------------------------------------------------------------------------------- graph8 events
-const ZARA_EVENTS = /repl(y|ied)|meeting\.|voice_ai\.|call_|booking|inbox/i;
+const ZARA_EVENTS = /repl(y|ied)|meeting\.|voice_ai\.|call_|booking|inbox|unsubscri|opt_?out|opted_out/i;
 const USMAN_EVENTS = /_sent$|bounced|opened|clicked|skipped|sequence\./i;
 
 async function onGraph8Event(e: BusEvents['graph8.event']) {
@@ -397,16 +427,23 @@ export const runtime: Runtime = {
     });
 
     // Recover: runs cut by a restart are failed (never auto-retried: they may have sent), fresh todos resume.
+    // Only STALE work is reclaimed (lock/run older than LOCK_TTL): another live instance on the same workspace
+    // (laptop spare, a teammate's worker) holds fresh locks and must not have its tasks failed under it.
     const ws = env.WORKSPACE_ID;
-    const stuck = await db.from('tasks').select('id,number').eq('workspace_id', ws).eq('status', 'in_progress');
+    const LOCK_TTL_MS = 10 * 60_000;
+    const staleIso = new Date(Date.now() - LOCK_TTL_MS).toISOString();
+    const stuck = await db.from('tasks').select('id,number').eq('workspace_id', ws).eq('status', 'in_progress')
+      .or(`locked_at.is.null,locked_at.lt.${staleIso}`);
     for (const t of stuck.data ?? []) {
       await patchTask(t.id, { status: 'failed', result_summary: 'Interrupted by a server restart', locked_by_run_id: null, locked_at: null });
       await wakeParent(t.id);
     }
-    await db.from('agent_runs').update({ status: 'failed', error: 'server restart', finished_at: new Date().toISOString() }).eq('workspace_id', ws).eq('status', 'running');
-    await db.from('agents').update({ status: 'idle', current_task_id: null }).eq('workspace_id', ws).eq('status', 'working');
+    await db.from('agent_runs').update({ status: 'failed', error: 'server restart', finished_at: new Date().toISOString() })
+      .eq('workspace_id', ws).eq('status', 'running').lt('started_at', staleIso);
+    // Resume only todos no live instance picked up (older than 2 min, younger than 1 h).
     const since = new Date(Date.now() - 60 * 60_000).toISOString();
-    const todo = await db.from('tasks').select('*').eq('workspace_id', ws).eq('status', 'todo').gte('created_at', since).order('priority').order('created_at');
+    const until = new Date(Date.now() - 2 * 60_000).toISOString();
+    const todo = await db.from('tasks').select('*').eq('workspace_id', ws).eq('status', 'todo').gte('created_at', since).lt('created_at', until).order('priority').order('created_at');
     for (const t of (todo.data ?? []) as TaskRow[]) if (t.assignee_agent_id) schedule(t, 'system', 'restart');
     log.info(`runtime started: ${brains.size} brains, ${stuck.data?.length ?? 0} interrupted, ${todo.data?.length ?? 0} resumed`);
   },
