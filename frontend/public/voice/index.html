@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Ayesha — graph8 Voice CRM Assistant</title>
+  <meta name="description" content="Talk to Ayesha, your AI-powered voice CRM assistant built on graph8. Ask about deals, clients, and meetings in real time." />
+  <meta name="theme-color" content="#000000" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="portal.css" />
+  <!-- Embedded in the portal (/office/voice): the portal shell already draws the sidebar and glow. -->
+  <script>if (window.self !== window.top) document.documentElement.classList.add('embedded');</script>
+</head>
+<body>
+<div class="app">
+  <div class="page-glow" aria-hidden="true"><span class="g-orange"></span><span class="g-blue"></span></div>
+
+  <!-- ── Sidebar (portal nav + AI team) ── -->
+  <aside class="sidebar" aria-label="Portal navigation">
+    <div class="amb blue" aria-hidden="true"></div>
+    <div class="amb orange" aria-hidden="true"></div>
+
+    <div class="brand">
+      <span class="logo-orb" aria-hidden="true"></span>
+      <span class="brand-name">Graphi</span>
+    </div>
+
+    <div class="workspace">
+      <p>graph8 Voice CRM</p>
+      <p>talk to your pipeline</p>
+    </div>
+
+    <nav class="nav">
+      <span class="nav-item active" aria-current="page">
+        <svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>
+        Voice call
+      </span>
+    </nav>
+
+    <div class="team">
+      <div class="team-head">
+        <p><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"/></svg>AI team</p>
+        <span>2 agents</span>
+      </div>
+      <ul>
+        <li class="team-row on">
+          <span class="avatar"><img src="avatars/ayesha.png" alt="" /><span class="dot active"></span></span>
+          <span class="who"><b>Ayesha</b><small class="tone-active">Head of Sales · on voice</small></span>
+        </li>
+        <li class="team-row">
+          <span class="avatar"><img src="avatars/bilal.png" alt="" /><span class="dot success"></span></span>
+          <span class="who"><b>Bilal</b><small>Scout · fetches CRM data</small></span>
+        </li>
+      </ul>
+    </div>
+
+    <div class="side-foot">
+      <div class="line">Powered by Vapi · Deepgram<span class="demo">Demo</span></div>
+    </div>
+  </aside>
+
+  <!-- ── Main ── -->
+  <div class="main">
+    <div class="scroll">
+
+      <!-- Header -->
+      <header class="page-head">
+        <div class="title">
+          <h1>Voice CRM</h1>
+          <span class="sub">/ Ayesha</span>
+        </div>
+        <div class="actions">
+          <div class="status-badge">
+            <div class="status-dot" id="conn-dot"></div>
+            <span id="conn-label">Disconnected</span>
+          </div>
+        </div>
+      </header>
+
+      <main class="grid">
+
+        <!-- LEFT: Transcript -->
+        <section class="card" id="transcript-panel" aria-label="Live conversation">
+          <header class="card-title">
+            <h2><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></svg>Live conversation</h2>
+            <span class="tag">Transcript</span>
+          </header>
+          <div class="card-body">
+            <div id="transcript-body">
+              <div class="empty-state" id="transcript-empty">
+                Start a call to see the<br>live transcript here.
+              </div>
+            </div>
+            <div class="suggestions" id="suggestions">
+              <div class="suggestion" onclick="sendSuggestion(this)">What are my top clients?</div>
+              <div class="suggestion" onclick="sendSuggestion(this)">Status of Northwind deal?</div>
+              <div class="suggestion" onclick="sendSuggestion(this)">What meetings do I have today?</div>
+              <div class="suggestion" onclick="sendSuggestion(this)">Give me a pipeline summary</div>
+              <div class="suggestion" onclick="sendSuggestion(this)">Which deals are going cold?</div>
+            </div>
+          </div>
+        </section>
+
+        <!-- CENTER: Orb + Controls -->
+        <section class="card center-col" aria-label="Call controls">
+          <div class="orb-wrap">
+            <div class="orb-ring"></div>
+            <div class="orb-ring2"></div>
+            <div class="orb" id="orb">🎙️</div>
+          </div>
+
+          <div class="agent-name">
+            <h2>Ayesha</h2>
+            <p>graph8 Voice CRM Assistant</p>
+          </div>
+
+          <div class="wave" id="wave">
+            <div class="wave-bar" style="--h:14px"></div>
+            <div class="wave-bar" style="--h:22px"></div>
+            <div class="wave-bar" style="--h:18px"></div>
+            <div class="wave-bar" style="--h:28px"></div>
+            <div class="wave-bar" style="--h:20px"></div>
+            <div class="wave-bar" style="--h:26px"></div>
+            <div class="wave-bar" style="--h:16px"></div>
+            <div class="wave-bar" style="--h:10px"></div>
+          </div>
+
+          <div class="call-status" id="callStatus">Click below to start a call</div>
+
+          <button id="callBtn" onclick="toggleCall()" title="Start / End Call">📞</button>
+          <div class="btn-label" id="btnLabel">Start Call</div>
+        </section>
+
+        <!-- RIGHT: Bilal log -->
+        <section class="card" id="bilal-panel" aria-label="Bilal data agent">
+          <header class="card-title">
+            <h2><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/><path d="M3 12a9 3 0 0 0 18 0"/></svg>Bilal — data agent</h2>
+            <span class="tag mono">/api/bilal</span>
+          </header>
+          <div class="card-body">
+            <div id="bilal-log">
+              <div class="empty-state" id="bilal-empty">
+                Bilal will fetch CRM data<br>as Ayesha needs it.
+              </div>
+            </div>
+          </div>
+        </section>
+
+      </main>
+
+      <!-- Footer -->
+      <footer>
+        <span>Powered by Vapi · Deepgram · graph8</span>
+        <div class="footer-pills">
+          <div class="tag real"><div class="dot"></div>Vapi Voice — Real</div>
+          <div class="tag real"><div class="dot"></div>Deepgram STT — Real</div>
+          <div class="tag mock"><div class="dot"></div>CRM Data — Mocked</div>
+        </div>
+      </footer>
+
+    </div>
+  </div>
+
+</div>
+
+<!-- ── Vapi Web SDK ── -->
+<script type="module">
+  import Vapi from 'https://esm.sh/@vapi-ai/web@2.7.1';
+  window.Vapi = Vapi.default || Vapi;
+</script>
+<script>
+  // ── CONFIG — fill these in from your .env / Vapi dashboard ──
+  const VAPI_PUBLIC_KEY  = 'e5376dde-2cbc-4d1f-bd4c-8a3ee33e1e4a'; // from .env
+  const ASSISTANT_ID     = 'ef10cd57-9995-4131-bc7a-079b7a0c661f'; // Assistant: Riley (Ayesha)
+
+  // ── State ──
+  let vapi = null;
+  let callActive = false;
+
+  // ── DOM refs ──
+  const orb         = document.getElementById('orb');
+  const wave         = document.getElementById('wave');
+  const callBtn      = document.getElementById('callBtn');
+  const btnLabel     = document.getElementById('btnLabel');
+  const callStatus   = document.getElementById('callStatus');
+  const connDot      = document.getElementById('conn-dot');
+  const connLabel    = document.getElementById('conn-label');
+  const transcriptEl = document.getElementById('transcript-body');
+  const emptyEl      = document.getElementById('transcript-empty');
+  const bilalLog     = document.getElementById('bilal-log');
+  const bilalEmpty   = document.getElementById('bilal-empty');
+  const suggestions  = document.getElementById('suggestions');
+
+  // ── Toggle call ──
+  async function toggleCall() {
+    if (!callActive) startCall(); else endCall();
+  }
+
+  function startCall() {
+    if (!VAPI_PUBLIC_KEY || VAPI_PUBLIC_KEY === 'YOUR_VAPI_PUBLIC_KEY') {
+      setStatus('⚠️ Set VAPI_PUBLIC_KEY + ASSISTANT_ID in index.html', 'error');
+      return;
+    }
+
+    vapi = new Vapi(VAPI_PUBLIC_KEY);
+    bindVapiEvents();
+    vapi.start(ASSISTANT_ID);
+
+    callActive = true;
+    callBtn.classList.add('active');
+    callBtn.textContent = '📵';
+    btnLabel.textContent = 'End Call';
+    setStatus('Connecting…', 'active');
+    setConnected(false);
+  }
+
+  function endCall() {
+    if (vapi) { vapi.stop(); vapi = null; }
+    callActive = false;
+    callBtn.classList.remove('active');
+    callBtn.textContent = '📞';
+    btnLabel.textContent = 'Start Call';
+    orb.className = 'orb';
+    wave.classList.remove('active');
+    setStatus('Call ended', '');
+    setConnected(false);
+  }
+
+  // ── Vapi events ──
+  function bindVapiEvents() {
+    vapi.on('call-start', () => {
+      setStatus('🟢 Connected — say something!', 'active');
+      setConnected(true);
+    });
+
+    vapi.on('call-end', () => {
+      setStatus('Call ended', '');
+      setConnected(false);
+      callActive = false;
+      callBtn.classList.remove('active');
+      callBtn.textContent = '📞';
+      btnLabel.textContent = 'Start Call';
+      orb.className = 'orb';
+      wave.classList.remove('active');
+    });
+
+    vapi.on('speech-start', () => {
+      orb.classList.remove('listening');
+      orb.classList.add('speaking');
+      orb.textContent = '🔊';
+      wave.classList.add('active');
+    });
+
+    vapi.on('speech-end', () => {
+      orb.classList.remove('speaking');
+      orb.textContent = '🎙️';
+      wave.classList.remove('active');
+    });
+
+    vapi.on('message', (msg) => {
+      // Live transcript
+      if (msg.type === 'transcript') {
+        if (msg.transcriptType === 'final') {
+          addMessage(msg.role === 'user' ? 'user' : 'ayesha', msg.transcript);
+          if (msg.role === 'user') {
+            orb.classList.add('listening');
+            orb.textContent = '👂';
+            setStatus('Ayesha is thinking…', 'active');
+          } else {
+            orb.classList.remove('listening');
+            orb.textContent = '🎙️';
+            setStatus('🟢 Connected', 'active');
+          }
+        }
+      }
+
+      // Function call — Bilal was called!
+      if (msg.type === 'function-call') {
+        const fn = msg.functionCall?.name ?? 'unknown';
+        addBilalLog(fn, msg.functionCall?.parameters, 'busy');
+      }
+
+      // Function call result returned
+      if (msg.type === 'function-call-result') {
+        updateLastBilalLog('ok', summariseResult(msg.result));
+      }
+    });
+
+    vapi.on('error', (err) => {
+      console.error('[Vapi Error]', err);
+      setStatus('❌ ' + (err?.message ?? 'Connection error'), 'error');
+      setConnected(false);
+    });
+  }
+
+  // ── UI helpers ──
+  function setStatus(text, cls) {
+    callStatus.textContent = text;
+    callStatus.className = 'call-status' + (cls ? ' ' + cls : '');
+  }
+
+  function setConnected(on) {
+    connDot.className = 'status-dot' + (on ? ' live' : '');
+    connLabel.textContent = on ? 'Live' : 'Disconnected';
+  }
+
+  function addMessage(role, text) {
+    if (emptyEl) emptyEl.remove();
+    suggestions.style.display = 'none';
+    const div = document.createElement('div');
+    div.className = 'msg ' + role;
+    div.innerHTML = `<div class="speaker">${role === 'user' ? 'You' : 'Ayesha'}</div>${escHtml(text)}`;
+    transcriptEl.appendChild(div);
+    transcriptEl.scrollTop = transcriptEl.scrollHeight;
+  }
+
+  let lastLogEl = null;
+  function addBilalLog(fnName, params, status) {
+    if (bilalEmpty) bilalEmpty.remove();
+    const div = document.createElement('div');
+    div.className = 'log-item';
+    div.innerHTML = `
+      <div class="log-icon">🔍</div>
+      <div class="log-body">
+        <div class="log-fn">
+          <span class="log-status ${status}"></span>${fnName}
+        </div>
+        <div class="log-detail">${params ? escHtml(JSON.stringify(params)) : 'no params'}</div>
+      </div>
+      <div class="log-time">${now()}</div>`;
+    bilalLog.appendChild(div);
+    bilalLog.scrollTop = bilalLog.scrollHeight;
+    lastLogEl = div;
+  }
+
+  function updateLastBilalLog(status, detail) {
+    if (!lastLogEl) return;
+    const dot = lastLogEl.querySelector('.log-status');
+    const det = lastLogEl.querySelector('.log-detail');
+    if (dot) dot.className = 'log-status ' + status;
+    if (det && detail) det.textContent = '✓ ' + detail;
+  }
+
+  function summariseResult(result) {
+    if (!result) return 'No data';
+    if (Array.isArray(result)) return `${result.length} record(s) returned`;
+    if (typeof result === 'object') {
+      const keys = Object.keys(result);
+      return keys.slice(0, 3).map(k => `${k}: ${result[k]}`).join(' · ');
+    }
+    return String(result).slice(0, 60);
+  }
+
+  function sendSuggestion(el) {
+    // Visual feedback — in a real call this would send to Vapi's text input if supported
+    addMessage('user', el.textContent);
+    el.style.opacity = '0.4';
+  }
+
+  function now() {
+    return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  }
+
+  function escHtml(s) {
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+</script>
+</body>
+</html>
