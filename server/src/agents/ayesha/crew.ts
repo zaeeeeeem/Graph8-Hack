@@ -102,7 +102,7 @@ function leadFact(l: any, extra: 'fit' | 'research' | 'deal') {
   return base;
 }
 
-async function pendingApproval(ws: UUID, role: CrewRole, kind: 'launch_sequence' | 'send_reply', leadIds?: UUID[]) {
+export async function pendingApproval(ws: UUID, role: CrewRole, kind: 'launch_sequence' | 'send_reply', leadIds?: UUID[]) {
   const me = await store.agentByRole(ws, role);
   let q = store.db.from('approvals').select('id,title,lead_id,slack_ts,slack_channel,status,created_at')
     .eq('workspace_id', ws).eq('requested_by_agent_id', me.id).eq('kind', kind).eq('status', 'pending');
@@ -193,7 +193,7 @@ async function startWork(role: CrewRole, i: CrewIntent, text: string, c: SlackCt
  * Edit flow via the runtime: mark the card edit_requested, then hand it the note as a reply in the card's thread
  * (exactly what [Edit] + a thread reply does). The owning agent revises and re-asks.
  */
-async function editApproval(a: { id: UUID; slack_ts: string | null; slack_channel: string | null }, note: string, c: SlackCtx): Promise<boolean> {
+export async function editApproval(a: { id: UUID; slack_ts: string | null; slack_channel: string | null }, note: string, c: SlackCtx): Promise<boolean> {
   if (!a.slack_ts || !a.slack_channel) return false;
   const { data } = await store.db.from('approvals').update({ status: 'edit_requested', decided_by_slack_user: c.userId, decided_at: new Date().toISOString() })
     .eq('id', a.id).eq('status', 'pending').select('id');
