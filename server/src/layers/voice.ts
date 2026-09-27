@@ -88,6 +88,8 @@ function fallbackPersona(company = 'our team'): Persona {
 }
 
 async function buildPersona(ctx: RunCtx): Promise<Persona> {
+  // W13: graph8 docs are another company's → never pitch that company on the phone.
+  if (ctx.settings?.g8_docs_match === false) return fallbackPersona(typeof ctx.settings?.plan_company === 'string' ? ctx.settings.plan_company : undefined);
   try {
     const docs = unwrap<Array<{ file_type?: string; display_name?: string; content?: string | null }>>(
       await withTimeout(g8.get('/global-context/documents', { include_content: true }), 15_000, 'global-context'),

@@ -34,8 +34,9 @@ export async function pricingMatrix(): Promise<string | null> {
 const EstimateSchema = z.object({ amount: z.number().positive(), plan: z.string() });
 
 /** Gemini picks the likely plan (annual contract value, USD) for this company from the pricing doc. */
-export async function estimateAmount(lead: LeadRow, opts: { agentId: UUID; workspaceId: UUID; taskId?: UUID }): Promise<{ amount: number; plan: string; estimated: true }> {
-  const pricing = await pricingMatrix();
+export async function estimateAmount(lead: LeadRow, opts: { agentId: UUID; workspaceId: UUID; taskId?: UUID; settings?: WorkspaceSettings }): Promise<{ amount: number; plan: string; estimated: true }> {
+  // graph8's docs are another company's (W13: selling for a different domain) → never price from its pricing doc.
+  const pricing = opts.settings?.g8_docs_match === false ? null : await pricingMatrix();
   if (!pricing) return { amount: FALLBACK_DEAL_AMOUNT, plan: 'default estimate', estimated: true };
   const research = JSON.stringify(lead.research ?? {}).slice(0, 1200);
   try {

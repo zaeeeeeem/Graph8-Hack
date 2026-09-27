@@ -46,6 +46,7 @@ vi.mock('../src/lib/log', () => {
 vi.mock('../src/lib/g8', () => ({ g8: { get: vi.fn(), post: vi.fn(), patch: vi.fn(), put: vi.fn(), del: vi.fn() } }));
 vi.mock('../src/lib/llm', () => ({ llm: { json: vi.fn(), text: vi.fn() } }));
 vi.mock('../src/layers', () => ({ layers: { all: vi.fn(() => []), register: vi.fn() } }));
+vi.mock('../src/lib/site', () => ({ readSite: vi.fn(async (d: string) => ({ domain: d, pages: [{ url: `https://${d}`, title: 'NewCo', description: '', text: 'NewCo sells payroll software to restaurants.' }], text: 'NewCo sells payroll software to restaurants.' })) }));
 vi.mock('../src/agents/runtime', () => ({ runtime: { enqueue: vi.fn(async () => ({ id: 'task-9', number: 9 })), register: vi.fn(), start: vi.fn() } }));
 vi.mock('../src/lib/store', () => ({
   store: {
@@ -100,6 +101,9 @@ const G8_OK: Record<string, any> = {
   '/linkedin/connection': { data: { connected: false } },
   '/teams/available/phone-numbers': { data: { items: [{ id: 1 }] } },
   '/usage': { data: { available_credits: 9074, held_credits: 0, total_used: 926 } },
+  '/intelligence/primary-website': { data: { primary_website_url: 'https://8x.social' } },
+  '/schedules': { data: [{ id: 'sched-1', name: 'Demo 24/7', windows: ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'].map((day) => ({ day, start: '00:00', end: '23:59' })) }] },
+  '/appointments/calendars': [{ credential_id: 1, provider: 'google_calendar', is_valid: true }],
 };
 
 function ctx(kind: string, input: any = {}): any {
@@ -184,15 +188,27 @@ describe('P1 onboarding', () => {
     expect(S.checklist.some(([k]) => k.startsWith('extra.'))).toBe(false);
   });
 
-  it('falls back to graph8 intelligence/analyze when there are no docs (L4)', async () => {
+  it('W13: no docs → reads the website now, starts graph8 study in background, keeps going (L4)', async () => {
     vi.mocked(g8.get).mockImplementation(async (p: string) => (p === '/global-context/documents' ? { data: [] } : G8_OK[p]));
     vi.mocked(g8.post).mockResolvedValue({ data: { task_id: 'g8-task-1', message: 'Intelligence analysis started successfully' } });
     const out = await ayesha.run(ctx('onboard', { domain: 'newco.io' }));
-    expect(S.settings.pending_analysis).toMatchObject({ g8_task_id: 'g8-task-1' });
-    expect(g8.post).toHaveBeenCalledWith('/intelligence/analyze', { website_url: 'https://newco.io', force: false });
-    expect(out).toMatch(/Waiting for graph8 analysis/);
-    expect(S.settings.pending_analysis).toMatchObject({ domain: 'newco.io' });
-    expect(S.posts.some((p) => /back in ~30 min/.test(p.msg.text))).toBe(true);
+    expect(out).toContain('Onboarded newco.io');
+    // org website is 8x.social ≠ newco.io → force a fresh study
+    expect(g8.post).toHaveBeenCalledWith('/intelligence/analyze', { website_url: 'https://newco.io', force: true });
+    expect(S.settings.pending_analysis).toMatchObject({ domain: 'newco.io', g8_task_id: 'g8-task-1' });
+    expect(S.settings).toMatchObject({ brain_source: 'website', g8_docs_match: false });
+    expect(vi.mocked(llm.json).mock.calls[0][0]).toContain('NewCo sells payroll software');
+    expect(S.checklist.find(([k, s]) => k === 'brain' && s === 'done')?.[2]).toMatch(/read newco\.io/);
+  });
+
+  it('W13: graph8 docs about another company are ignored (never pitch 8x.social for another domain)', async () => {
+    vi.mocked(g8.post).mockResolvedValue({ data: { task_id: 'g8-task-2' } });
+    await ayesha.run(ctx('onboard', { domain: 'linear.app' }));
+    const prompt = String(vi.mocked(llm.json).mock.calls[0][0]);
+    expect(prompt).not.toContain('Series A SaaS founders');
+    expect(prompt).toContain('Company website text');
+    expect(g8.get).not.toHaveBeenCalledWith('/company-profile'); // "8x Social" name must not leak
+    expect(S.settings.g8_docs_match).toBe(false);
   });
 
   it('resumed run with still no docs does not start another analysis', async () => {
@@ -202,12 +218,22 @@ describe('P1 onboarding', () => {
     expect(out).toContain('Onboarded');
   });
 
+  it('resumed on an active workspace merges graph8 docs instead of re-hiring', async () => {
+    S.workspace.status = 'active';
+    S.settings.target_persona = 'Heads of Growth at Series A SaaS';
+    const out = await ayesha.run(ctx('onboard', { domain: '8x.social', resumed: true }));
+    expect(out).toBe('Merged graph8 study of 8x.social');
+    expect(slack.checklist).not.toHaveBeenCalled();
+    expect(S.settings).toMatchObject({ pending_analysis: null, brain_source: 'graph8_docs' });
+    expect(S.posts.some((p) => /graph8 finished studying 8x\.social/.test(p.msg.text))).toBe(true);
+  });
+
   it('continues with defaults when analyze fails', async () => {
     vi.mocked(g8.get).mockImplementation(async (p: string) => (p === '/global-context/documents' ? { data: [] } : G8_OK[p]));
     vi.mocked(g8.post).mockRejectedValue(new Error('500'));
     const out = await ayesha.run(ctx('onboard', { domain: 'newco.io' }));
     expect(out).toContain('Onboarded');
-    expect(S.checklist.find(([k, s]) => k === 'brain' && s === 'warn')).toBeTruthy();
+    expect(S.settings.pending_analysis ?? null).toBeNull();
   });
 
   it('D19: re-hire when the team exists posts status and stops', async () => {
@@ -395,6 +421,7 @@ describe('plan copy helpers', () => {
     vi.mocked(g8.get).mockRejectedValue(new Error('404'));
     expect(await companyName('8x.social', '8x')).toBe('8x.social');
     expect(await companyName('acme.io', 'Acme Robotics')).toBe('Acme Robotics');
+    expect(await companyName('linear.app', 'Linear', false)).toBe('Linear');
   });
 });
 
