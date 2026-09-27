@@ -153,6 +153,18 @@ describe('tool registry', () => {
     expect(dry.dry_run).toBe(true);
     expect(runtime.enqueue).not.toHaveBeenCalled();
   });
+  it('exclusions become none_of filters; Zara never books a real prospect', async () => {
+    const plan = heuristicPlan('VP Marketing');
+    applyExplicit(plan, { exclude_industries: ['agencies'], exclude_domains: ['acme.com'] });
+    expect(toFilters(plan)).toContainEqual({ field: 'company_domain', operator: 'none_of', value: ['acme.com'] });
+    expect(toFilters(plan).some((f) => f.field === 'company_industry' && f.operator === 'none_of')).toBe(true);
+    S.tables.leads = [THAD];
+    const out: any = await runTool('book_meeting', { lead: 'Thad', start_time: '2026-09-29T15:00:00+05:00' }, tctx('closer'));
+    expect(out.booked).toBe(false);
+    expect(runtime.enqueue).not.toHaveBeenCalled();
+    S.tables.leads = [{ ...THAD, is_test_contact: true }];
+    expect(await runTool('book_meeting', { lead: 'Thad', start_time: '2026-09-29T15:00:00+05:00' }, tctx('closer'))).toMatchObject({ started: true });
+  });
   it('ask_agent relays the teammate answer and refuses nesting', async () => {
     const askAgent = vi.fn(async () => 'Thad is a 100 fit.');
     expect(await runTool('ask_agent', { agent: 'Hira', question: 'why Thad?' }, tctx('head_of_sales', { askAgent }))).toEqual({ agent: 'Hira', answer: 'Thad is a 100 fit.' });

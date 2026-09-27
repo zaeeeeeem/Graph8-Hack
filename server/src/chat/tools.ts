@@ -156,6 +156,8 @@ export const Constraints = z.object({
   company_sizes: z.array(z.string()).nullish().describe('Employee buckets: 1-10, 11-50, 51-200, 201-500, 501-1000, 1001-5000, 5001-10000, 10001+'),
   companies: z.array(z.string()).nullish().describe('Company domains for company-first search, e.g. ["stripe.com"]'),
   signals: z.array(z.string()).nullish().describe('Buying signals to prefer, e.g. ["hiring"]'),
+  exclude_industries: z.array(z.string()).nullish().describe('Industries to skip, e.g. ["agencies"]'),
+  exclude_companies: z.array(z.string()).nullish().describe('Company domains to skip'),
   note: z.string().nullish().describe('Anything else the founder asked for'),
 });
 export type Constraints = z.infer<typeof Constraints>;
@@ -169,11 +171,15 @@ export function scoutInput(c: Constraints, s: { target_persona?: string | null; 
   if (c.countries?.length) filters.countries = c.countries.slice(0, 6);
   if (c.company_sizes?.length) filters.sizes = c.company_sizes.slice(0, 6);
   if (c.companies?.length) filters.domains = c.companies.slice(0, 20);
+  if (c.exclude_industries?.length) filters.exclude_industries = c.exclude_industries.slice(0, 6);
+  if (c.exclude_companies?.length) filters.exclude_domains = c.exclude_companies.slice(0, 20);
   // Default roles only: the saved persona's "… at consumer apps" part must not leak into an explicit industry ask.
   const defaultRoles = (s.target_persona || 'decision makers').split(/\s+(?:at|in|for|from|within)\s+/i)[0].trim() || 'decision makers';
   const who = c.titles?.length ? c.titles.join(' / ') : c.industries?.length || c.companies?.length ? defaultRoles : s.target_persona || 'decision makers';
   const where = [c.industries?.length ? `in ${c.industries.join(', ')}` : '', c.companies?.length ? `at ${c.companies.join(', ')}` : '',
-    c.company_sizes?.length ? `(${c.company_sizes.join(', ')} staff)` : '', c.countries?.length ? `in ${c.countries.join(', ')}` : ''].filter(Boolean).join(' ');
+    c.company_sizes?.length ? `(${c.company_sizes.join(', ')} staff)` : '', c.countries?.length ? `in ${c.countries.join(', ')}` : '',
+    c.exclude_industries?.length || c.exclude_companies?.length ? `excluding ${[...(c.exclude_industries ?? []), ...(c.exclude_companies ?? [])].join(', ')}` : '',
+    c.signals?.length ? `preferring ${c.signals.join(', ')}` : ''].filter(Boolean).join(' ');
   const persona = `${who}${where ? ` ${where}` : ''}`.slice(0, 240);
   const label = [c.countries?.length === 1 ? c.countries[0] : '', c.industries?.join('/') ?? '', c.titles?.length ? c.titles[0] : ''].filter(Boolean).join(' ').slice(0, 60) || null;
   const input: JsonObject = {
@@ -640,7 +646,7 @@ export const TOOLS: ChatTool[] = [
     },
   }),
   tool({
-    name: 'stop_lead', roles: ['sdr', 'closer'],
+    name: 'stop_lead', roles: ['sdr', 'closer', 'head_of_sales'],
     description: 'Stop all outreach to a lead or their whole company (do not contact).',
     params: z.object({ lead: z.string(), whole_company: z.boolean().nullish() }),
     async run(a, ctx) {
@@ -670,6 +676,28 @@ export const TOOLS: ChatTool[] = [
       }
       const ev = rowsOf(await db().from('lead_events').select('summary').eq('lead_id', lead.id).in('type', ['reply_received', 'reply_classified']).order('occurred_at', { ascending: false }).limit(2));
       return { lead: lead.full_name, company: lead.company_name, they_said: ev.map((e) => clip(e.summary, 200)), intent: lead.last_reply_intent ?? null, instruction: a.instruction ?? null, write_draft_in_answer: true, note: 'Draft only — nothing is sent from chat.' };
+    },
+  }),
+  tool({
+    name: 'book_meeting', roles: ['closer'],
+    description: 'Book a meeting with a lead at a time (ISO 8601). Only allowlisted test contacts can be booked; real prospects get a booking-link reply instead.',
+    params: z.object({ lead: z.string(), start_time: z.string().describe('ISO 8601, e.g. 2026-09-29T15:00:00+05:00') }),
+    async run(a, ctx) {
+      const { lead, error } = await oneLead(ctx, a.lead);
+      if (!lead) return error!;
+      if (!lead.is_test_contact) return { booked: false, reason: `${lead.full_name} is a real prospect: we never book or message real prospects from here (allowlist guard). Draft a reply with the booking link instead.` };
+      if (Number.isNaN(Date.parse(a.start_time))) return { booked: false, reason: 'need an exact time' };
+      return enqueueWork(ctx, 'closer', 'book_meeting', `Book ${lead.full_name} at ${a.start_time}`.slice(0, 120), { requested_by: 'founder_chat', lead_id: lead.id, start_time: a.start_time });
+    },
+  }),
+  tool({
+    name: 'create_deal', roles: ['closer'],
+    description: 'Create the graph8 deal for a lead (estimated amount from pricing).',
+    params: z.object({ lead: z.string() }),
+    async run(a, ctx) {
+      const { lead, error } = await oneLead(ctx, a.lead);
+      if (!lead) return error!;
+      return enqueueWork(ctx, 'closer', 'create_deal', `Deal for ${lead.full_name}`.slice(0, 120), { requested_by: 'founder_chat', lead_id: lead.id, meeting_id: null, scheduled_at: lead.meeting_at ?? null, source: 'chat' });
     },
   }),
   tool({

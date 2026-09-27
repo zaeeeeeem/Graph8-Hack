@@ -33,6 +33,12 @@ const SCRIPT: Q[] = [
   { label: 'bank F', text: 'Bilal, any replies from prospects?', channel: TEAM },
   { label: 'bank H', text: 'Get me 3 meetings with UK fintech CFOs this week' },
   { label: 'bank G', text: 'From now on find 15 leads a day' },
+  { label: 'bank B', text: 'Compare Thad Warren and Adam Singer, who should we go after first?' },
+  { label: 'bank D', text: 'Hira, what should we say to Adam Singer?', channel: TEAM },
+  { label: 'bank C', text: 'Bilal find 5 marketing heads in software companies but no agencies', channel: TEAM },
+  { label: 'bank E', text: 'Usman make the emails shorter and more casual', channel: TEAM },
+  { label: 'bank F', text: 'Zara book Thad Warren for Tuesday 3pm', channel: TEAM },
+  { label: 'bank A', text: 'What can you do?' },
   { label: 'limits', text: 'write a blog post about our product' },
 ];
 

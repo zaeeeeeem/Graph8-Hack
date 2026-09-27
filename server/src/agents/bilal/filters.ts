@@ -24,10 +24,13 @@ export interface SearchPlan {
   loose: { titles: string[]; sizes: string[]; countries: string[] };
   /** Company-first search (explicit "people at X"). */
   domains?: string[];
+  /** Founder exclusions ("not agencies", "skip stripe.com"). */
+  excludeIndustries?: string[];
+  excludeDomains?: string[];
 }
 
 /** Founder constraints from chat (assign_task / search_prospects). They override the Gemini mapping and never drift to the default persona. */
-export interface ExplicitFilters { titles?: string[]; industries?: string[]; sizes?: string[]; countries?: string[]; domains?: string[] }
+export interface ExplicitFilters { titles?: string[]; industries?: string[]; sizes?: string[]; countries?: string[]; domains?: string[]; exclude_industries?: string[]; exclude_domains?: string[] }
 
 const INDUSTRY_SYNONYMS: Array<[RegExp, string[]]> = [
   [/\b(saas|software|tech(nology)?|b2b software|dev ?tools?)\b/i, ['Software Development', 'IT Services and IT Consulting']],
@@ -79,6 +82,11 @@ export function applyExplicit(plan: SearchPlan, x: ExplicitFilters | null | unde
     notes.push(`geo ${plan.countries.join(', ')}`);
   }
   if (x.domains?.length) { plan.domains = uniq(x.domains.map((d) => d.toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/\/.*$/, ''))).slice(0, 20); notes.push(`companies ${plan.domains.join(', ')}`); }
+  if (x.exclude_industries?.length) {
+    plan.excludeIndustries = uniq(x.exclude_industries.flatMap(matchIndustries)).slice(0, 8);
+    if (plan.excludeIndustries.length) { plan.industries = plan.industries.filter((i) => !plan.excludeIndustries!.includes(i)); notes.push(`excluding ${plan.excludeIndustries.join(', ')}`); }
+  }
+  if (x.exclude_domains?.length) { plan.excludeDomains = uniq(x.exclude_domains.map((d) => d.toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/\/.*$/, ''))).slice(0, 20); notes.push(`excluding ${plan.excludeDomains.join(', ')}`); }
   return notes;
 }
 
@@ -175,6 +183,8 @@ export function toFilters(plan: SearchPlan): SearchFilter[] {
   const countries = [...plan.countries, ...plan.loose.countries];
   if (countries.length) f.push({ field: 'country', operator: 'any_of', value: countries });
   if (plan.domains?.length) f.push({ field: 'company_domain', operator: 'any_of', value: plan.domains });
+  if (plan.excludeIndustries?.length) f.push({ field: 'company_industry', operator: 'none_of', value: plan.excludeIndustries });
+  if (plan.excludeDomains?.length) f.push({ field: 'company_domain', operator: 'none_of', value: plan.excludeDomains });
   return f;
 }
 
