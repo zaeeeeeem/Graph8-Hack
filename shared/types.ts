@@ -197,6 +197,39 @@ export interface StandupData {
   blockers?: string[];
 }
 
+/**
+ * Founder defaults + graph8 ids discovered at onboarding. Stored in `workspaces.settings` (jsonb).
+ * Server reads with `getSettings(ws)` and merges over DEFAULT_WORKSPACE_SETTINGS. See docs/BUILD-PLAN.md §4.
+ */
+export interface WorkspaceSettings {
+  /** Leads Bilal finds per run (D6). */
+  daily_find: number;
+  /** Leads Hira researches per run (D6). */
+  daily_research: number;
+  target_persona?: string;
+  target_icp?: string;
+  geo?: string[];
+  channels?: { email: boolean; linkedin: boolean; phone: boolean };
+  g8_pipeline_id?: string;
+  g8_stage_new_meeting_id?: string;
+  g8_event_type_id?: number;
+  g8_mailbox_id?: number;
+  g8_mailbox_email?: string;
+  g8_schedule_id?: string;
+  /** graph8 list of the most recent find_prospects run (Hira/Usman reuse it). */
+  last_run_list_id?: number;
+  /** Founder preferences saved from chat ("from now on…"), plain text. */
+  notes?: string[];
+  // Layer state (docs/BUILD-PLAN.md §4); absent = layer not set up.
+  g8_voice_agent_id?: string;
+  g8_intent_keyword_ids?: string[];
+  g8_ai_research_group_id?: string;
+  linkedin_connected?: boolean;
+  [k: string]: Json | undefined;
+}
+
+export const DEFAULT_WORKSPACE_SETTINGS: WorkspaceSettings = { daily_find: 10, daily_research: 5 };
+
 // ---------------------------------------------------------------------------
 // Table rows
 // ---------------------------------------------------------------------------
@@ -222,7 +255,7 @@ export interface WorkspaceRow {
   spend_day: ISODate;
   task_counter: number;
   sales_brain: SalesBrain;
-  settings: JsonObject;
+  settings: WorkspaceSettings;
   created_at: ISODateTime;
   updated_at: ISODateTime;
 }
