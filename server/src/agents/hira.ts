@@ -280,8 +280,8 @@ function dedupeSignals(s: LeadSignal[]): LeadSignal[] {
 export function continueLate(ctx: RunCtx, jobId: string, leadIds: UUID[], n: number) {
   void (async () => {
     try {
+      // Job polling 404s on this org, so a 'timeout' still re-reads the contacts: the waterfall may have landed anyway.
       const job = await pollJob(jobId, timing.lateWaitMs);
-      if (job.status === 'timeout') return;
       await spendCredits(ctx, job, n);
       const works = await loadLeads(ctx.workspaceId, leadIds);
       await unlockAfterEnrich(ctx, works);
