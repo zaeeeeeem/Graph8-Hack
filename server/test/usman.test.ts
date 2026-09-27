@@ -428,3 +428,32 @@ describe('sendfix: direct compose for every email step', () => {
     expect(h.db.tables.leads.find((l: any) => l.id === 't')).toMatchObject({ stage: 'contacted', sequence_state: 'enrolled' });
   });
 });
+
+describe('launch card polish', () => {
+  it('one line per step: D0 subject, D3 follow-up first line, D9 breakup first line, ⏸/📞 with reason + layer preview', async () => {
+    h.layersThrow = false;
+    h.layers = [
+      { name: 'linkedin', stepPlan: async () => [{ day: 1, channel: 'linkedin', action: 'connection_request', state: 'planned', reason: 'waiting to connect LinkedIn in graph8', preview: 'Hi Lead, loved your post on UGC' }] },
+      { name: 'voice', stepPlan: async () => [{ day: 5, channel: 'phone', action: 'call', state: 'planned', reason: 'no AI-calling number yet' }] },
+    ];
+    await usman.run(ctx());
+    const text = JSON.stringify(h.approvals[0].blocks);
+    const lines = (h.approvals[0].blocks[2].text.text as string).split('\n');
+    expect(lines).toHaveLength(5);
+    expect(lines[0]).toContain('*D0* Email — “Quick idea for”');
+    expect(lines[1]).toMatch(/in ⏸ \*D1\* LinkedIn connection request — “Hi Lead, loved your post on UGC” _\(⏸ waiting to connect/);
+    expect(lines[2]).toContain('*D3* Follow-up — “Bumping this.”');
+    expect(lines[3]).toMatch(/📞 ⏸ \*D5\* AI voice call _\(⏸ no AI-calling number yet\)_/);
+    expect(lines[4]).toContain('*D9* Breakup — “Last note from me.”');
+    expect(text).not.toMatch(/@/);
+  });
+
+  it('layer step plans run in parallel with the email copy (not after it)', async () => {
+    h.layersThrow = false;
+    const order: string[] = [];
+    (llm.json as any).mockImplementation(async () => { order.push('copy:start'); await new Promise((r) => setTimeout(r, 30)); order.push('copy:end'); return structuredClone(COPY); });
+    h.layers = [{ name: 'linkedin', stepPlan: async () => { order.push('layer:start'); await new Promise((r) => setTimeout(r, 30)); order.push('layer:end'); return []; } }];
+    await usman.run(ctx());
+    expect(order.indexOf('layer:start')).toBeLessThan(order.indexOf('copy:end'));
+  });
+});

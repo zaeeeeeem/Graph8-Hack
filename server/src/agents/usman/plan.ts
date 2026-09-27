@@ -8,7 +8,8 @@ import type { Channel, JsonObject, LeadRow, SequenceStep } from '../../../../sha
 import { EMAIL_DAYS, type SequenceCopy } from './copy';
 import { errMsg, withTimeout } from './util';
 
-export const LAYER_TIMEOUT_MS = 8_000;
+/** Per-layer cap. Layers run in parallel with each other and with Usman's email copy, so this is not additive. */
+export const LAYER_TIMEOUT_MS = 20_000;
 
 /** One row of our plan. `mode`: graph8 sends it | we fire it (scheduler) | shown ⏸ only. */
 export interface PlanStep {
@@ -36,17 +37,18 @@ export function safeLayers(): Layer[] {
 export async function collectLayerSteps(ctx: RunCtx, leads: LeadRow[]): Promise<{ planned: Array<PlannedStep & { layer: string }>; warnings: string[] }> {
   const planned: Array<PlannedStep & { layer: string }> = [];
   const warnings: string[] = [];
-  for (const layer of safeLayers()) {
-    if (!layer.stepPlan) continue;
-    try {
-      const steps = await withTimeout(layer.stepPlan(ctx, leads), LAYER_TIMEOUT_MS, `${layer.name} stepPlan`);
-      for (const s of steps ?? []) planned.push({ ...s, layer: String(layer.name) });
-    } catch (e) {
-      warnings.push(`${layer.name}: ${errMsg(e)}`);
-    }
-  }
+  const withPlan = safeLayers().filter((l) => l.stepPlan);
+  const results = await Promise.allSettled(withPlan.map((layer) =>
+    withTimeout(Promise.resolve().then(() => layer.stepPlan!(ctx, leads)), LAYER_TIMEOUT_MS, `${layer.name} stepPlan`)));
+  results.forEach((r, i) => {
+    const name = String(withPlan[i].name);
+    if (r.status === 'fulfilled') for (const s of r.value ?? []) planned.push({ ...s, layer: name });
+    else warnings.push(`${name}: ${errMsg(r.reason)}`);
+  });
   return { planned, warnings };
 }
+
+export { firstLine };
 
 export function buildPlan(copy: SequenceCopy, layerSteps: Array<PlannedStep & { layer: string }>): PlanStep[] {
   const rows: Omit<PlanStep, 'n'>[] = EMAIL_DAYS.map((day, i) => ({
@@ -61,6 +63,8 @@ export function buildPlan(copy: SequenceCopy, layerSteps: Array<PlannedStep & { 
       day: s.day, channel: s.channel, action: s.action, mode, layer: s.layer,
       reason: s.reason ?? (mode === 'planned' && s.state === 'live' ? 'no g8 step or fire()' : undefined),
       g8Step: s.g8Step, fire: s.fire,
+      // Layers may attach a `preview` (e.g. LinkedIn draft for the top lead) — shown on the Launch card.
+      preview: typeof (s as { preview?: unknown }).preview === 'string' ? String((s as { preview?: unknown }).preview).slice(0, 140) : undefined,
     });
   }
   // Stable sort by day; emails first on the same day.

@@ -13,7 +13,7 @@ import type { ApprovalRow, Channel, JsonObject, LeadRow, SequenceRow, UUID, Work
 import { launchCardBlocks, launchCardText, type LaunchCardInput } from '../slack/cards/launch';
 import { previewLead, reviseSequenceCopy, SequenceCopy, writeSequenceCopy } from './usman/copy';
 import { archiveSequence, createSequence, patchEmailSteps, resolveMailbox, runSequence, scheduleId, setLeadContext } from './usman/g8ops';
-import { buildPlan, collectLayerSteps, emailStepData, toG8Steps, toSummary, type PlanStep } from './usman/plan';
+import { buildPlan, collectLayerSteps, emailStepData, firstLine, toG8Steps, toSummary, type PlanStep } from './usman/plan';
 import { findLeadByContact, findSequenceByG8, mapG8Event, recordTouch, setTracker, getTracker, statsLine } from './usman/track';
 import { aiTemplateEnabled, errMsg, firstName, safe, scrub, secondsPerDay } from './usman/util';
 import { directSendOn, firstTouchSender, renderFirstName, setFirstTouchSender } from './usman/first-touch';
@@ -136,16 +136,16 @@ async function buildSequence(ctx: RunCtx): Promise<string> {
   await mark(c, 'leads', 'done', `${leads.length} leads · ${tests.length} test`);
   await ctx.step('note', 'load_leads', `${leads.length} leads (${tests.length} test)`);
 
-  // U-T2 + U-T4
+  // U-T2 + U-T4, with layer step plans (LinkedIn drafts, voice) running in parallel — never break L0.
   await mark(c, 'copy', 'doing');
+  await mark(c, 'layers', 'doing');
+  const layersP = collectLayerSteps(ctx, leads);
   const { name: sender, ws } = await senderName(workspaceId);
   const copy = await writeSequenceCopy(leads, ws.sales_brain ?? {}, sender, llmOpts);
   await mark(c, 'copy', 'done', copy.tone || '3 emails');
   await ctx.step('llm', 'write_step_briefs', `3 email templates + preview (${copy.tone.slice(0, 60)})`);
 
-  // Layers (never break L0)
-  await mark(c, 'layers', 'doing');
-  const { planned, warnings } = await collectLayerSteps(ctx, leads);
+  const { planned, warnings } = await layersP;
   const plan = buildPlan(copy, planned);
   for (const w of warnings) await safe(() => c?.add({ key: `warn_${w.slice(0, 20)}`, label: w, state: 'warn' }));
   const extra = plan.filter((s) => s.channel !== 'email');
@@ -201,7 +201,7 @@ async function buildSequence(ctx: RunCtx): Promise<string> {
 async function requestLaunch(ctx: RunCtx, payload: LaunchPayload, plan: LaunchCardInput['steps'], leads: LeadRow[],
   copy: SequenceCopy, warnings: string[], c?: Checklist): Promise<ApprovalRow> {
   await mark(c, 'card', 'doing');
-  const input = cardInput(payload, plan, leads, copy, warnings);
+  const input = cardInput(payload, plan.map((s: any) => ({ ...s, emailIdx: s.emailIdx ?? s.email_idx })), leads, copy, warnings);
   const title = `Launch ${payload.sequence_name}: ${payload.enroll_count} test lead(s), ${payload.lead_count - payload.enroll_count} preview only`;
   const approval = await ctx.requestApproval('launch_sequence', scrub(title), payload, launchCardBlocks(input), 'Launch');
   await store.db.from('sequences').update({ approval_id: approval.id, status: 'pending_approval' }).eq('id', payload.sequence_row_id);
@@ -349,7 +349,7 @@ async function revise(ctx: RunCtx, approval: ApprovalRow, p: LaunchPayload, note
   await ctx.step('tool', 'patch_steps', `patched ${patched} email step(s)`);
 
   const steps = (seq.steps ?? []).map((s: any) => s.email_idx !== undefined && copy.emails[s.email_idx]
-    ? { ...s, subject: copy.emails[s.email_idx].subject, preview: copy.emails[s.email_idx].body.split('\n').find((l: string) => l.trim() && !/^(hi|hey|hello)\b/i.test(l.trim()))?.slice(0, 140) }
+    ? { ...s, subject: copy.emails[s.email_idx].subject, preview: firstLine(copy.emails[s.email_idx].body) }
     : s);
   await store.db.from('sequences').update({ steps }).eq('id', seq.id);
   const next: LaunchPayload = { ...p, revision: (p.revision ?? 0) + 1, copy: copy as unknown as JsonObject };
