@@ -14,7 +14,6 @@ import type { Channel, JsonObject, LeadRow, ReplyIntent, TaskRow, UUID } from '.
 import { g8 } from '../lib/g8';
 import { slack } from '../lib/slack';
 import { store } from '../lib/store';
-import { layers } from '../layers';
 import { normalize, type NormalizedMeeting, type NormalizedReply, type NormalizedVoice } from '../inbound/normalize';
 import { registerInboxPoll } from '../inbound/inbox-poll';
 import { classifyReply, AUTO_INTENTS, type Classification } from './zara/classify';
@@ -32,7 +31,6 @@ import { winBlocks, winText, usd } from '../slack/cards/win';
 type EventCtx = Omit<RunCtx, 'task' | 'runId'> & { task?: TaskRow };
 type AnyCtx = RunCtx | EventCtx;
 
-const LAYER_TIMEOUT_MS = 8000;
 const STAGE_ORDER = ['prospect', 'researched', 'queued', 'contacted', 'replied', 'meeting', 'deal', 'won', 'lost', 'disqualified'];
 const stageAtLeast = (cur: string, target: string) => STAGE_ORDER.indexOf(cur) >= STAGE_ORDER.indexOf(target);
 
@@ -40,8 +38,6 @@ const stageAtLeast = (cur: string, target: string) => STAGE_ORDER.indexOf(cur) >
 // small helpers
 // ---------------------------------------------------------------------------
 const firstName = (full: string) => (full || '').trim().split(/\s+/)[0] ?? '';
-const withTimeout = <T>(p: Promise<T>, ms: number): Promise<T> =>
-  Promise.race([p, new Promise<T>((_, rej) => setTimeout(() => rej(new Error(`timeout ${ms}ms`)), ms))]);
 
 async function safeStep(ctx: AnyCtx, kind: 'tool' | 'llm' | 'slack' | 'note', name: string, summary: string, data?: JsonObject) {
   try { await ctx.step(kind, name, scrub(summary), data); } catch { /* never break the playbook on logging */ }
@@ -455,21 +451,6 @@ async function onVoiceEvent(ctx: EventCtx, v: NormalizedVoice) {
   }
 }
 
-/** Layer inbound handlers (BUILD-PLAN §4) for event types Zara does not own. Each isolated: try/catch + timeout. */
-async function dispatchToLayers(ctx: EventCtx, type: string, payload: JsonObject) {
-  let all: ReturnType<typeof layers.all> = [];
-  try { all = layers.all(); } catch { return; }
-  for (const l of all) {
-    const h = l.inbound?.[type];
-    if (!h) continue;
-    try {
-      await withTimeout(h({ type, payload, inboundEventId: (payload as any)?._inbound_event_id ?? '', workspaceId: ctx.workspaceId }), LAYER_TIMEOUT_MS);
-    } catch (e) {
-      ctx.log.warn(`zara: layer ${l.name} inbound ${type} failed`, { error: (e as Error).message });
-    }
-  }
-}
-
 // ---------------------------------------------------------------------------
 // brain
 // ---------------------------------------------------------------------------
@@ -547,7 +528,8 @@ export const zara: AgentBrain = {
 
   async onEvent(ctx, type, payload) {
     const n = normalize(type, payload);
-    if (!n) return dispatchToLayers(ctx, type, payload);
+    // Unknown types: runtime already dispatches layer inbound handlers (runtime.onGraph8Event) — nothing to do here.
+    if (!n) return;
     const inboundId = (payload as any)?._inbound_event_id;
     if (n.kind === 'reply') return onReplyEvent(ctx, n, inboundId);
     if (n.kind === 'meeting') return onMeetingEvent(ctx, n);

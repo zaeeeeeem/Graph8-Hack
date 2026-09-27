@@ -93,7 +93,9 @@ async function main() {
     await new Promise((r) => setTimeout(r, 1000));
     const { data: t } = await store.db.from('tasks').select('status,result_summary').eq('id', task.id).limit(1);
     const s = t?.[0];
-    if (s && ['done', 'failed', 'blocked', 'cancelled'].includes(s.status)) { console.log(`${s.status}: ${s.result_summary ?? ''}`); break; }
+    // Another server booting on the same workspace marks our in-flight task 'Interrupted…' — the run still continues here.
+    const foreignRestart = s?.status === 'failed' && /server restart/i.test(s.result_summary ?? '');
+    if (s && !foreignRestart && ['done', 'failed', 'blocked', 'cancelled'].includes(s.status)) { console.log(`${s.status}: ${s.result_summary ?? ''}`); break; }
   }
   process.exit(0);
 }

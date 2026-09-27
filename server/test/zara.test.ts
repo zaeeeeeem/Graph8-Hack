@@ -362,18 +362,28 @@ describe('events + approvals', () => {
     expect(mg8.post.mock.calls.filter((c: any[]) => c[0] === '/deals')).toHaveLength(1);
     expect(ctx.report).toHaveBeenCalledTimes(1);
   });
+  it('deal 422 "no associated company" → attach contact to company, retry', async () => {
+    let n = 0;
+    mg8.post.mockImplementation(async (path: string) => {
+      if (path === '/deals' && n++ === 0) throw new Error('graph8 422: Contact(s) have no associated company: [101]. A deal needs a company.');
+      return path === '/deals' ? { data: { id: 'deal-9', stage_name: 'New Meeting' } } : { data: {} };
+    });
+    mllm.json.mockResolvedValue({ amount: 24000, plan: 'Managed' });
+    const ctx = makeCtx('create_deal', { lead_id: 'L1', meeting_id: 'mt2' });
+    await zara.run(ctx);
+    expect(mg8.patch).toHaveBeenCalledWith('/contacts/101', { company_id: 555 });
+    expect(ctx.report).toHaveBeenCalledWith('win', expect.any(String), expect.any(String), expect.objectContaining({ g8_deal_id: 'deal-9', g8_url: 'https://app.graph8.com/deals/deal-9' }));
+  });
   it('voice outcome not_interested → stop + disqualify', async () => {
     await zara.onEvent!(makeCtx('x', {}), 'voice.outcome', { contact_id: '101', disposition: 'not_interested' });
     expect(h.state.fake.tables.leads[0]).toMatchObject({ stage: 'disqualified', sequence_state: 'stopped' });
   });
-  it('unknown events go to layer inbound handlers, isolated', async () => {
-    const good = vi.fn(async () => {});
-    (layers.all as any).mockReturnValue([
-      { name: 'bad', inbound: { 'intent.signal': async () => { throw new Error('boom'); } } },
-      { name: 'good', inbound: { 'intent.signal': good } },
-    ]);
-    await zara.onEvent!(makeCtx('x', {}), 'intent.signal', { a: 1 });
-    expect(good).toHaveBeenCalled();
+  it('unknown events are left to the runtime (no double layer dispatch)', async () => {
+    const h1 = vi.fn(async () => {});
+    (layers.all as any).mockReturnValue([{ name: 'x', inbound: { 'voice_ai.call_completed': h1 } }]);
+    await zara.onEvent!(makeCtx('x', {}), 'voice_ai.call_completed', { a: 1 });
+    expect(h1).not.toHaveBeenCalled();
+    expect(runtime.enqueue).not.toHaveBeenCalled();
   });
   it('approval Send → guarded send; guard block → alert', async () => {
     const ctx = makeCtx('handle_reply', {});

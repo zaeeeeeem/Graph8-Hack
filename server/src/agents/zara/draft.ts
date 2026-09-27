@@ -69,11 +69,14 @@ export async function draftReply(i: DraftInput, opts: { agentId: UUID; workspace
   try {
     const out = (await llm.text(prompt, { ...opts, temperature: 0.4, system: 'You write concise, human B2B sales emails.' })).trim();
     if (!out) return templateDraft(i);
+    // Force the exact founder signature (the LLM sometimes truncates or rewrites it).
+    const body = out.replace(/\n+\s*(best|thanks|cheers|regards|best regards|kind regards),?\s*\n[\s\S]*$/i, '').trimEnd();
+    const signed = `${body}${signature(i.founderName, i.companyName)}`;
     // Guarantee the slots survive the LLM for auto-sent "interested" replies.
-    if ((i.intent === 'interested' || i.intent === 'callback') && i.slots?.length && !i.slots.every((s) => out.includes(s.label))) {
+    if ((i.intent === 'interested' || i.intent === 'callback') && i.slots?.length && !i.slots.every((s) => signed.includes(s.label))) {
       return templateDraft(i);
     }
-    return out;
+    return signed;
   } catch {
     return templateDraft(i);
   }

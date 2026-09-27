@@ -11,9 +11,10 @@ import { llm } from '../../lib/llm';
 import type { LeadRow, UUID, WorkspaceSettings } from '../../../../shared/types';
 
 export const FALLBACK_DEAL_AMOUNT = 12_000;
+export const MIN_DEAL_AMOUNT = 1_000;
 export const G8_APP = 'https://app.graph8.com';
-/** Record URL pattern unverified (docs/graph8-app-links.md) → link the pipeline board, which is verified. */
-export const dealUrl = (_dealId: string | null) => `${G8_APP}/deals/pipeline`;
+/** Browser-verified (docs/verify/core.md §4): /deals/{id}; pipeline board when the id is missing. */
+export const dealUrl = (dealId: string | null) => (dealId ? `${G8_APP}/deals/${dealId}` : `${G8_APP}/deals/pipeline`);
 
 let pricingCache: { text: string; at: number } | null = null;
 export async function pricingMatrix(): Promise<string | null> {
@@ -39,7 +40,9 @@ export async function estimateAmount(lead: LeadRow, opts: { agentId: UUID; works
   const research = JSON.stringify(lead.research ?? {}).slice(0, 1200);
   try {
     const out = await llm.json([
-      'From this pricing matrix, pick the plan this prospect most likely buys and its first-year contract value in USD.',
+      'From this pricing matrix, pick the plan this prospect most likely buys after a discovery call booked by our outbound',
+      'team, and its first-year contract value in USD. They are a B2B buyer: pick the main paid offer (managed/pro/business tier),',
+      'not a free or self-serve DIY tier, sized to the company. Monthly prices × 12.',
       `Prospect: ${lead.job_title ?? 'contact'} at ${lead.company_name ?? 'unknown company'} (${lead.company_domain ?? 'no domain'}).`,
       `Known company facts: ${research}`,
       'Return {"amount": number (USD, annual), "plan": short plan name}.',
@@ -47,7 +50,8 @@ export async function estimateAmount(lead: LeadRow, opts: { agentId: UUID; works
       pricing.slice(0, 6000),
     ].join('\n'), EstimateSchema, { ...opts, temperature: 0 });
     const amount = Math.round(out.amount);
-    if (!Number.isFinite(amount) || amount < 100 || amount > 5_000_000) throw new Error('implausible');
+    // Self-serve tiers are not what a booked discovery call sells → below MIN_DEAL_AMOUNT use the founder-approved fallback.
+    if (!Number.isFinite(amount) || amount < MIN_DEAL_AMOUNT || amount > 5_000_000) throw new Error('implausible');
     return { amount, plan: out.plan.slice(0, 80), estimated: true };
   } catch {
     return { amount: FALLBACK_DEAL_AMOUNT, plan: 'default estimate', estimated: true };
@@ -63,8 +67,9 @@ async function ownerCandidates(settings: WorkspaceSettings): Promise<string[]> {
     const r = await g8.get('/team-members', { limit: 5 });
     const items: any[] = r?.data?.items ?? r?.data ?? [];
     const me = items.find((m) => m.status === 'active') ?? items[0];
-    if (me?.propelauth_user_id) out.push(String(me.propelauth_user_id));
+    // Verified 10:15 PKT: deal owner_id = team-member `id` (propelauth id is rejected).
     if (me?.id) out.push(String(me.id));
+    if (me?.propelauth_user_id) out.push(String(me.propelauth_user_id));
   } catch { /* fall through */ }
   return [...new Set(out)];
 }
@@ -86,8 +91,9 @@ export async function createDeal(p: {
   if (lead.g8_company_id && /^\d+$/.test(lead.g8_company_id)) base.company_id = Number(lead.g8_company_id);
   const owners = await ownerCandidates(settings);
   let lastErr: unknown = null;
+  let companyAttached = false;
   for (const owner_id of owners.length ? owners : ['']) {
-    try {
+    for (let attempt = 0; attempt < 2; attempt++) try {
       const r = await g8.post('/deals', { ...base, ...(owner_id ? { owner_id } : {}) });
       const d = r?.data ?? r ?? {};
       if (owner_id) ownerCache = owner_id;
@@ -95,6 +101,12 @@ export async function createDeal(p: {
       return { dealId, stageName: d.stage_name ?? 'New Meeting', amount: est.amount, plan: est.plan, url: dealUrl(dealId) };
     } catch (e) {
       lastErr = e;
+      // core.md §4: "Contact(s) have no associated company" → attach the contact to its company, retry once.
+      if (!companyAttached && /no associated company/i.test(String((e as Error).message)) && base.company_id) {
+        companyAttached = true;
+        try { await g8.patch(`/contacts/${lead.g8_contact_id}`, { company_id: base.company_id }); continue; } catch { /* give up below */ }
+      }
+      break;
     }
   }
   throw lastErr instanceof Error ? lastErr : new Error('POST /deals failed');
