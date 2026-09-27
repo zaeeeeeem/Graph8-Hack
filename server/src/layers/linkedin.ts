@@ -30,7 +30,7 @@ export const MESSAGE_DAY = 6;
 export const TOUCHES = 2;
 const G8_TIMEOUT_MS = 8_000;
 /** Usman's stepPlan timeout is 8 s; drafting must finish well inside it. */
-const DRAFT_TIMEOUT_MS = 6_000;
+const DRAFT_TIMEOUT_MS = 15_000;
 const MAX_DRAFT_LEADS = 25;
 export const REASON_WAITING = 'waiting to connect LinkedIn in graph8';
 export const REASON_API = "LinkedIn connected, but graph8's API doesn't accept LinkedIn steps yet — send the drafts from graph8";
