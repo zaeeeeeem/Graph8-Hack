@@ -6,6 +6,7 @@
  *   P4 standup      /sales-standup, 09:00 cron   → agents/ayesha/standup.ts
  * Bus wiring (Slack commands, buttons, messages, cron, graph8 intelligence events) lives in `wireAyesha()`.
  */
+import { voiceLine } from '../lib/voice';
 import type { AgentBrain, BusEvents, RunCtx } from '../contracts';
 import type { AgentRole, ApprovalRow, JsonObject, ReportKind, UUID } from '../../../shared/types';
 import { bus } from '../lib/bus';
@@ -43,7 +44,8 @@ export async function runDailyRun(ctx: RunCtx): Promise<string> {
     geo: s.geo ?? [], trigger: input.trigger ?? 'plan_start',
   }, { parentTaskId: ctx.task.id, priority: 1 });
   await ctx.step('tool', 'delegate_task', `Bilal: find ${n} prospects`, { taskId: t.id });
-  await slack.postAs(ROLE, channel, { text: `Shabash team 💪 Bilal is finding ${n} prospects (T-${t.number}). Follow along in #sales-team.`, threadTs }).catch(() => undefined);
+  const line = await voiceLine(ROLE, `Bilal is finding ${n} prospects (T-${t.number}). Follow along in #sales-team.`, { workspaceId: ctx.workspaceId, agentId: ctx.agentId, taskId: ctx.task.id });
+  await slack.postAs(ROLE, channel, { text: line, threadTs }).catch(() => undefined);
   await ctx.report('update', 'Daily run started', `Bilal is finding ${n} prospects; research, sequence and your launch call follow.`, { find: n, child_task_id: t.id });
   return `Daily run started: T-${t.number}`;
 }
