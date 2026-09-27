@@ -51,7 +51,9 @@ export async function pollJob(jobId: string, maxWaitMs = timing.maxWaitMs, onTic
       onTick?.(last);
       if (TERMINAL.has(last.status)) return last;
     } catch (e) {
-      if (++errors >= 3) throw e;
+      // Live (07:35 PKT): GET /enrichment/jobs/{id} answered 404 "Job not found" for a fresh job for 3+ min.
+      // Treat 404 as "not visible yet" and keep polling until the cap; other errors fail after 3 in a row.
+      if (!/404|not found/i.test(String((e as Error)?.message ?? e)) && ++errors >= 3) throw e;
     }
     if (Date.now() + timing.pollMs > deadline) return { ...last, status: 'timeout' };
     await sleep(timing.pollMs);
@@ -89,3 +91,14 @@ export async function verifyEmail(email: string): Promise<Verdict> {
 }
 
 export const emailUsable = (v: Verdict | null | undefined) => v === 'valid' || v === 'catch-all';
+
+/**
+ * CRM contacts come back with `work_email: "***"` / `mobile_phone: "***"` when graph8 holds data that is not yet
+ * revealed (verified live 07:30 PKT). `POST /contacts/unlock-info {contact_ids}` reveals it; CHARGES CREDITS
+ * (`credits_charged`), already-unlocked ids are free. Real prospects: data only, never contacted.
+ */
+export async function unlockContacts(contactIds: Array<string | number>): Promise<{ credits: number }> {
+  if (!contactIds.length) return { credits: 0 };
+  const r = unwrap<any>(await retryOnce(() => g8.post('/contacts/unlock-info', { contact_ids: contactIds.map(Number) })));
+  return { credits: Number(r?.credits_charged ?? r?.credits_used ?? 0) || 0 };
+}

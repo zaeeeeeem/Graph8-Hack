@@ -114,6 +114,7 @@ describe('hira.run', () => {
       return { why_now: 'Hiring a finance controller while scaling', talking_points: ['a', 'b'], best_channel: 'email' };
     });
     m.g8.post.mockImplementation(async (path: string, body: any) => {
+      if (path === '/contacts/unlock-info') return { data: { credits_charged: body.contact_ids.length } };
       if (path === '/enrichment/enrich') return { data: { job_id: `job-${body.contact_ids.join('-')}`, status: 'queued' } };
       if (path === '/enrichment/verify-email') return { data: { status: body.email.startsWith('bad') ? 'invalid' : body.email.startsWith('p2') ? 'ok_for_all' : 'ok' } };
       if (path === '/enrichment/lookup/company') return { data: { found: true, data: { name: 'Co', industry: 'Financial Services', employee_count: '201-500' } } };
@@ -138,9 +139,12 @@ describe('hira.run', () => {
     const c = ctx({ lead_ids: ['L1', 'L2', 'L3', 'L4', 'L5'], backfill_lead_ids: ['L6', 'L7'], test_lead_ids: ['T1'], list_id: '77' });
     const summary = await hira.run(c);
 
+    const unlockCalls = m.g8.post.mock.calls.filter((x) => x[0] === '/contacts/unlock-info');
+    expect(unlockCalls[0][1].contact_ids).toEqual([1001, 1002, 1003, 1004, 1005]);
+    // only the one still without an email after unlock goes to waterfall enrichment
     const enrichCalls = m.g8.post.mock.calls.filter((x) => x[0] === '/enrichment/enrich');
-    expect(enrichCalls[0][1]).toMatchObject({ contact_ids: [1001, 1002, 1003, 1004, 1005], list_id: 77 });
-    expect(enrichCalls[1][1].contact_ids).toEqual([1006]); // backfill round
+    expect(enrichCalls[0][1]).toMatchObject({ contact_ids: [1004], list_id: 77 });
+    expect(enrichCalls).toHaveLength(1); // backfill L6 got its email from unlock
 
     const byId = Object.fromEntries(db.tables.leads.map((l) => [l.id, l]));
     expect(byId.L4.stage).toBe('disqualified');
@@ -161,6 +165,7 @@ describe('hira.run', () => {
     expect(lc.L3.email_verified).toBe(false);
 
     expect(m.store.spend).toHaveBeenCalledWith(expect.objectContaining({ source: 'graph8', credits: 12, action: 'enrichment', workspaceId: WS }));
+    expect(m.store.spend).toHaveBeenCalledWith(expect.objectContaining({ source: 'graph8', credits: 5, action: 'unlock_contacts' }));
 
     for (const e of db.tables.lead_events) expect(e.summary).not.toMatch(PII);
     for (const l of db.tables.leads) expect(JSON.stringify({ why: l.why_now, r: l.research })).not.toMatch(PII);
@@ -193,6 +198,18 @@ describe('hira.run', () => {
     expect(c.delegate.mock.calls[0][3].pending_lead_ids).toEqual(['L4']);
   });
 
+  it('treats job 404 "Job not found" (live graph8 behaviour) as not-ready → pending, not a failure', async () => {
+    m.g8.get.mockImplementation(async (path: string) => {
+      if (path === '/contacts/suppressions') return { data: [] };
+      if (path.startsWith('/enrichment/jobs/')) throw new Error('graph8 404: Job not found');
+      if (path.startsWith('/contacts/')) return { data: {} };
+      throw new Error(path);
+    });
+    const c = ctx({ lead_ids: ['L4'], list_id: '77' });
+    await hira.run(c);
+    expect(db.tables.leads.find((l) => l.id === 'L4')!.research.email_status).toBe('pending');
+  });
+
   it('merges layer research sources and survives a failing one', async () => {
     m.layers.all.mockReturnValue([
       { name: 'ai_research', research: { name: 'ai_research', collect: async () => ({ L1: { facts: ['Announced EU expansion in graph8 AI research'] } }) } },
@@ -208,7 +225,7 @@ describe('hira.run', () => {
   it('continues without enrichment if graph8 refuses to start the job', async () => {
     const base = m.g8.post.getMockImplementation()!;
     m.g8.post.mockImplementation(async (path: string, body: any) => {
-      if (path === '/enrichment/enrich') throw new Error('402 insufficient credits');
+      if (path === '/enrichment/enrich' || path === '/contacts/unlock-info') throw new Error('402 insufficient credits');
       return base(path, body);
     });
     const c = ctx({ lead_ids: ['L1', 'L2'], list_id: '77' });
@@ -221,6 +238,6 @@ describe('hira.run', () => {
     c.settings.last_run_list_id = 77;
     await hira.run(c);
     expect(c.delegate).toHaveBeenCalled();
-    expect(m.g8.post.mock.calls.find((x) => x[0] === '/enrichment/enrich')![1].contact_ids).toHaveLength(5);
+    expect(m.g8.post.mock.calls.find((x) => x[0] === '/contacts/unlock-info')![1].contact_ids).toHaveLength(5);
   });
 });

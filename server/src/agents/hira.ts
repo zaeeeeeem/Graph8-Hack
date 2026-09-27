@@ -10,7 +10,7 @@ import { store } from '../lib/store';
 import { researchCard, type ResearchCardRow } from '../slack/cards/research';
 import { asArray, collectHandles, eachLayer, errMsg, g8ContactUrl, normLinkedin, openProgress, pool, scrubPii, type Progress } from './bilal/util';
 import { hiringSignal, lookupCompany, openJobs, type CompanyFacts } from './hira/company';
-import { emailUsable, pollJob, readContact, startEnrichment, timing, verifyEmail, type JobState, type Verdict } from './hira/enrich';
+import { emailUsable, pollJob, readContact, startEnrichment, timing, unlockContacts, verifyEmail, type JobState, type Verdict } from './hira/enrich';
 import { writeHook, type Hook } from './hira/hook';
 
 const LAYER_MS = 30_000;
@@ -82,11 +82,23 @@ async function offerText(workspaceId: UUID): Promise<string | undefined> {
   } catch { return undefined; }
 }
 
-async function spendCredits(ctx: RunCtx, job: JobState, n: number) {
-  if (!job.credits) return;
+async function spendAction(ctx: RunCtx, action: string, credits: number, meta: JsonObject) {
+  if (!credits) return;
   try {
-    await store.spend({ workspaceId: ctx.workspaceId, agentId: ctx.agentId, source: 'graph8', action: 'enrichment', credits: job.credits, taskId: ctx.task.id, runId: ctx.runId, meta: { job_id: job.jobId, contacts: n, successful: job.successful } });
+    await store.spend({ workspaceId: ctx.workspaceId, agentId: ctx.agentId, source: 'graph8', action, credits, taskId: ctx.task.id, runId: ctx.runId, meta });
   } catch (e) { ctx.log.warn('spend record failed', { err: errMsg(e) }); }
+}
+
+const spendCredits = (ctx: RunCtx, job: JobState, n: number) =>
+  spendAction(ctx, 'enrichment', job.credits, { job_id: job.jobId, contacts: n, successful: job.successful });
+
+/** New enrichment hits may be masked again → unlock (already-unlocked ids are free), then read back. */
+async function unlockAfterEnrich(ctx: RunCtx, ws: Work[]) {
+  try {
+    const u = await unlockContacts(ws.map((w) => w.lead.g8_contact_id!).filter(Boolean));
+    await spendAction(ctx, 'unlock_contacts', u.credits, { contacts: ws.length, after: 'enrichment' });
+  } catch { /* read what is visible */ }
+  await pool(ws, 5, applyContact);
 }
 
 // ---------------------------------------------------------------------------
@@ -111,8 +123,21 @@ async function applyContact(w: Work) {
 }
 
 export async function researchRound(ctx: RunCtx, works: Work[], listId: string | number | undefined, pr: Progress, env: { offer?: string; suppressed: Set<string>; warnings: string[] }): Promise<void> {
-  // R1 start enrichment (real prospects in CRM, no email yet). TEST contacts already have allowlisted data.
-  const enrichable = works.filter((w) => !w.lead.is_test_contact && w.lead.g8_contact_id && !w.email);
+  // R1a unlock what graph8 already holds (CRM contacts come back masked `***`; ~1 credit each, reveals email + mobile).
+  const inCrm = works.filter((w) => !w.lead.is_test_contact && w.lead.g8_contact_id && !w.email);
+  if (inCrm.length) {
+    try {
+      const u = await unlockContacts(inCrm.map((w) => w.lead.g8_contact_id!));
+      await spendAction(ctx, 'unlock_contacts', u.credits, { contacts: inCrm.length });
+      await pool(inCrm, 5, applyContact);
+      await ctx.step('tool', 'unlock_contacts', `Unlocked ${inCrm.length} contacts (${u.credits} credits), ${inCrm.filter((w) => w.email).length} emails revealed`, { n: inCrm.length, credits: u.credits });
+    } catch (e) {
+      env.warnings.push(`unlock failed: ${errMsg(e)}`);
+    }
+  }
+
+  // R1b waterfall enrichment only for those still missing an email (async; polled below while research runs).
+  const enrichable = inCrm.filter((w) => !w.email);
   let jobP: Promise<JobState | null> = Promise.resolve(null);
   if (enrichable.length && listId != null) {
     try {
@@ -122,8 +147,10 @@ export async function researchRound(ctx: RunCtx, works: Work[], listId: string |
       jobP = pollJob(jobId).catch((e) => { env.warnings.push(`enrichment polling failed: ${errMsg(e)}`); return null; });
     } catch (e) {
       env.warnings.push(`enrichment not started: ${errMsg(e)}`);
-      await pr.set('unlock', 'warn', 'enrichment unavailable — using search data');
+      await pr.set('unlock', 'warn', 'waterfall enrichment unavailable — using unlocked data');
     }
+  } else {
+    await pr.set('unlock', 'done', `${inCrm.filter((w) => w.email).length}/${inCrm.length} emails unlocked`);
   }
 
   // R3 company research + layer sources, in parallel with enrichment.
@@ -169,7 +196,7 @@ export async function researchRound(ctx: RunCtx, works: Work[], listId: string |
       continueLate(ctx, job.jobId, enrichable.map((w) => w.lead.id), enrichable.length);
     } else {
       await spendCredits(ctx, job, enrichable.length);
-      await pool(enrichable, 5, applyContact);
+      await unlockAfterEnrich(ctx, enrichable);
       await pr.set('unlock', job.status === 'completed' ? 'done' : 'warn', `${job.status}: ${job.successful} found, ${job.credits} credits`);
     }
   }
@@ -252,8 +279,8 @@ export function continueLate(ctx: RunCtx, jobId: string, leadIds: UUID[], n: num
       if (job.status === 'timeout') return;
       await spendCredits(ctx, job, n);
       const works = await loadLeads(ctx.workspaceId, leadIds);
+      await unlockAfterEnrich(ctx, works);
       await pool(works, 4, async (w) => {
-        await applyContact(w);
         if (w.email) w.verdict = await verifyEmail(w.email);
         w.channels = channelsOf(w);
         w.jobId = jobId;
