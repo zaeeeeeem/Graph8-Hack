@@ -42,6 +42,7 @@ vi.mock('../src/layers', () => ({
 
 import { g8 } from '../src/lib/g8';
 import { llm } from '../src/lib/llm';
+import { slack } from '../src/lib/slack';
 import { NotAllowlisted } from '../src/contracts';
 import { usman, setFirstTouchSender } from '../src/agents/usman';
 import { secondsPerDay } from '../src/agents/usman/util';
@@ -245,6 +246,19 @@ describe('onApproval', () => {
     expect(h.approvals).toHaveLength(2);
     expect(h.approvals[1].payload.revision).toBe(1);
     expect(h.db.tables.sequences[0].approval_id).toBe('appr-2');
+  });
+
+  it('edit without a note: asks in the thread in Usman\'s voice, template when Gemini returns junk', async () => {
+    const { c, a } = await built();
+    (slack.postAs as any).mockClear();
+    (llm.text as any).mockResolvedValueOnce('Chalo, tell me what to tweak in this thread and I will redo it ✍️');
+    await usman.onApproval!(c, a, 'edit');
+    expect((llm.text as any).mock.calls.at(-1)[0]).toMatch(/Usman, SDR/);
+    expect((slack.postAs as any).mock.calls.at(-1)[2].text).toBe('Chalo, tell me what to tweak in this thread and I will redo it ✍️');
+
+    (llm.text as any).mockResolvedValueOnce('mail me at someone@example.com');
+    await usman.onApproval!(c, a, 'edit');
+    expect((slack.postAs as any).mock.calls.at(-1)[2].text).toBe('What should I change? Reply in this thread and I will revise the sequence.');
   });
 
   it('rejected: cancels, leads stay researched and detached, graph8 sequence archived', async () => {

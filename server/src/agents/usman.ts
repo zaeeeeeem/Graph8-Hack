@@ -7,6 +7,7 @@
  */
 import { g8 } from '../lib/g8';
 import { slack } from '../lib/slack';
+import { voiceLine } from '../lib/voice';
 import { store } from '../lib/store';
 import type { AgentBrain, Checklist, ChecklistItem, RunCtx } from '../contracts';
 import type { ApprovalRow, Channel, JsonObject, LeadRow, SequenceRow, UUID, WorkspaceSettings } from '../../../shared/types';
@@ -62,6 +63,10 @@ async function postThread(ctx: RunCtx, text: string) {
     if (!th.channel || !th.ts) return;
     await slack.postAs('sdr', th.channel, { text: scrub(text), threadTs: th.ts });
   });
+}
+/** Conversational status line reworded in Usman's voice; falls back to the template (never throws). */
+function say(ctx: RunCtx, template: string): Promise<string> {
+  return voiceLine('sdr', template, { workspaceId: ctx.workspaceId, agentId: ctx.agentId, taskId: ctx.task.id }).catch(() => template);
 }
 function mark(c: Checklist | undefined, key: string, state: ChecklistItem['state'], note?: string) {
   return safe(() => c?.set(key, state, note ? scrub(note) : undefined));
@@ -297,11 +302,11 @@ async function launch(ctx: RunCtx, approval: ApprovalRow, p: LaunchPayload): Pro
   }
   await mark(c, 'card', 'done', `launched · ${enrolled} test enrolled · ${previewOnly.length} preview only`);
   await mark(c, 'track', 'doing', statsLine({}));
-  if (!c) {
-    await postThread(ctx, `🚀 Launched — ${enrolled} test lead(s) enrolled, ${previewOnly.length} prospect(s) preview only. I'll post sends here.`);
-  }
+  // Thread line in Usman's voice (Gemini, 3 s cap) written while the report posts — no added latency.
+  const said = c ? undefined : say(ctx, `🚀 Launched — ${enrolled} test lead(s) enrolled, ${previewOnly.length} prospect(s) preview only. I'll post sends here.`);
   await safe(() => ctx.report('update', 'Sequence launched',
     `${enrolled} test lead(s) enrolled in ${seq.name}; ${previewOnly.length} real prospect(s) preview only.${problems.length ? ` ⚠️ ${problems.join('; ')}` : ''}`));
+  if (said) await postThread(ctx, await said);
   startSendPoll();
 }
 
@@ -393,7 +398,7 @@ export const usman: AgentBrain = {
     if (decision === 'rejected') return cancel(ctx, approval, p);
     const text = (note ?? approval.decision_note ?? '').trim();
     if (!text) {
-      await postThread(ctx, 'What should I change? Reply in this thread and I will revise the sequence.');
+      await postThread(ctx, await say(ctx, 'What should I change? Reply in this thread and I will revise the sequence.'));
       return;
     }
     try { await revise(ctx, approval, p, text); }
