@@ -53,7 +53,9 @@ export function buildPlan(copy: SequenceCopy, layerSteps: Array<PlannedStep & { 
     day, channel: 'email' as Channel, action: 'send', mode: 'g8' as const, emailIdx: i,
     subject: copy.emails[i]?.subject, preview: firstLine(copy.emails[i]?.body),
   }));
-  for (const s of layerSteps) {
+  for (let s of layerSteps) {
+    // docs/verify/layers.md V-L1: graph8 rejects every LinkedIn step type in POST /sequences — never send one.
+    if (s.channel === 'linkedin' && s.g8Step) s = { ...s, g8Step: undefined, state: s.fire ? s.state : 'planned', reason: s.reason ?? 'LinkedIn not connected' };
     const mode: PlanStep['mode'] = s.state !== 'live' ? 'planned' : s.g8Step ? 'g8' : s.fire ? 'fire' : 'planned';
     rows.push({
       day: s.day, channel: s.channel, action: s.action, mode, layer: s.layer,

@@ -2,6 +2,7 @@
  * U-T7 track_sends + U12 live checklist after launch. Used by onEvent (webhooks) and send-poll (GET /sequences/{id}/contacts).
  * Dedupe: one lead_event per (lead, type, g8 step) — webhook and poll can both report the same send.
  */
+import { env } from '../../lib/env';
 import { g8 } from '../../lib/g8';
 import { slack } from '../../lib/slack';
 import { store } from '../../lib/store';
@@ -84,7 +85,7 @@ export interface TrackInput {
   seq?: SequenceRow;
   /** graph8 step order (1-based) when known; also used for dedupe. */
   stepOrder?: number;
-  source: 'webhook' | 'poll' | 'scheduler';
+  source: 'webhook' | 'poll' | 'scheduler' | 'direct';
   extra?: JsonObject;
 }
 
@@ -153,7 +154,7 @@ export async function updateTracker(seq: SequenceRow, line: string): Promise<voi
     return;
   }
   await safe(async () => {
-    if (!seq.task_id) return;
+    if (!seq.task_id || env.SLACK_DISABLED) return;
     const { data } = await store.db.from('tasks').select('slack_channel, slack_thread_ts').eq('id', seq.task_id).limit(1);
     const t = data?.[0];
     if (!t?.slack_channel || !t?.slack_thread_ts) return;

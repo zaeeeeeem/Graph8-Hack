@@ -43,7 +43,7 @@ vi.mock('../src/layers', () => ({
 import { g8 } from '../src/lib/g8';
 import { llm } from '../src/lib/llm';
 import { NotAllowlisted } from '../src/contracts';
-import { usman } from '../src/agents/usman';
+import { usman, setFirstTouchSender } from '../src/agents/usman';
 import { secondsPerDay } from '../src/agents/usman/util';
 import { sanitizeCopy } from '../src/agents/usman/copy';
 import { launchCardBlocks, timelineText } from '../src/slack/cards/launch';
@@ -89,6 +89,7 @@ function ctx(extra: Record<string, any> = {}) {
 beforeEach(() => {
   vi.clearAllMocks();
   _resetScheduler();
+  setFirstTouchSender(undefined);
   h.layers = []; h.layersThrow = true; h.settings = { daily_find: 10, daily_research: 5, g8_mailbox_id: 1, g8_mailbox_email: 'sender@example.com' };
   h.approvals = []; h.reports = [];
   h.db = fakeDb({
@@ -189,9 +190,9 @@ describe('build_sequence (Layer 0, zero layers)', () => {
     await usman.run(ctx());
     const create = (g8.post as any).mock.calls.find((c: any[]) => c[0] === '/sequences')[1];
     expect(create.steps.every((s: any) => s.input_type === 'AI_GENERATED_TEMPLATE' && s.step_data.instructions)).toBe(true);
-    const batch = (g8.patch as any).mock.calls.find((c: any[]) => c[0] === '/fields/values/batch')[1];
-    expect(batch.rows).toHaveLength(3);
-    expect(batch.rows[0].fields[0].column_id).toBe(42);
+    const fieldPatches = (g8.patch as any).mock.calls.filter((c: any[]) => c[0] === '/fields/42/values');
+    expect(fieldPatches).toHaveLength(3);
+    expect(fieldPatches[0][1]).toMatchObject({ record_id: expect.any(Number), entity: 'contacts' });
   });
 
   it('fails cleanly with no leads', async () => {
@@ -320,5 +321,51 @@ describe('scheduler', () => {
     h.db.tables.lead_events = [];
     h.db.tables.leads.find((l: any) => l.id === 't').stage = 'replied';
     expect(await tickScheduler(new Date(launchedAt + 10 * 60_000), 'ws1')).toBe(0);
+  });
+});
+
+describe('live-verified fixes', () => {
+  it('falls back to POST /status live when /run 400s (no list bound); name has no redactable digit run', async () => {
+    (g8.post as any).mockImplementation(async (path: string) => {
+      if (path === '/sequences') return { data: { id: 'seq-g8-1', status: 'drafted' } };
+      if (path.endsWith('/run')) throw new Error('graph8 POST /run -> 400: Sequence has no associated contact list');
+      return { data: {} };
+    });
+    const c = ctx(); await usman.run(c);
+    expect(h.db.tables.sequences[0].name).not.toMatch(/\d{4}-\d{2}/);
+    await usman.onApproval!(c, h.approvals[0], 'approved');
+    expect(g8.post).toHaveBeenCalledWith('/sequences/seq-g8-1/status', { status: 'live' });
+    expect(h.reports.some((r) => r[0] === 'update' && /launched/i.test(r[1]))).toBe(true);
+  });
+
+  it('direct first-touch seam: sends email 1 to TEST leads only, rendered, recorded as step 1 (poll dedupes)', async () => {
+    const sender = vi.fn(async () => ({ ok: true, ref: 'msg-1' }));
+    setFirstTouchSender(sender);
+    const c = ctx(); await usman.run(c); await usman.onApproval!(c, h.approvals[0], 'approved');
+    expect(sender).toHaveBeenCalledTimes(1);
+    const arg = (sender.mock.calls[0] as any)[0];
+    expect(arg).toMatchObject({ g8ContactId: 'c-t', g8SequenceId: 'seq-g8-1' });
+    expect(arg.body).toMatch(/^Hi Test,/);
+    expect(arg.body).not.toContain('{{');
+    (g8.get as any).mockResolvedValue({ data: [{ contact_id: 'c-t', state: 'active', current_step_order: 2 }] });
+    expect(await pollSendsOnce('ws1')).toBe(0);
+    expect(h.db.tables.lead_events.filter((e: any) => e.type === 'email_sent')).toHaveLength(1);
+  });
+
+  it('first-touch seam is skipped when settings.usman_direct_first_touch === false', async () => {
+    const sender = vi.fn(async () => ({ ok: true }));
+    setFirstTouchSender(sender);
+    h.settings.usman_direct_first_touch = false;
+    const c = ctx(); await usman.run(c); await usman.onApproval!(c, h.approvals[0], 'approved');
+    expect(sender).not.toHaveBeenCalled();
+  });
+
+  it('never sends a LinkedIn g8Step to graph8 (V-L1)', async () => {
+    h.layersThrow = false;
+    h.layers = [{ name: 'linkedin', stepPlan: async () => [{ day: 1, channel: 'linkedin', action: 'message', state: 'live', g8Step: { step_type: 'HEYREACH' } }] }];
+    await usman.run(ctx());
+    const create = (g8.post as any).mock.calls.find((x: any[]) => x[0] === '/sequences')[1];
+    expect(create.steps.some((st: any) => st.step_type === 'HEYREACH')).toBe(false);
+    expect(h.db.tables.sequences[0].steps.find((st: any) => st.channel === 'linkedin').mode).toBe('planned');
   });
 });

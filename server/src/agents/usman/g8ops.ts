@@ -65,19 +65,26 @@ export async function setLeadContext(leads: LeadRow[]): Promise<number> {
   let col = fields.find((f) => f.title === SALES_HOOK_FIELD || f.name === SALES_HOOK_FIELD)?.id;
   if (!col) col = unwrap<{ id: number }>(await g8.post('/fields', { title: SALES_HOOK_FIELD, data_type: 'text', entity: 'contacts' }))?.id;
   if (!col) throw new Error('could not create sales_hook field');
-  const rows = leads.filter((l) => l.g8_contact_id).map((l) => {
+  // docs/verify/core.md: PATCH /fields/{column_id}/values is the verified per-record route (assert/batch no-ops fields).
+  let n = 0;
+  for (const l of leads) {
+    if (!l.g8_contact_id) continue;
     const p = packOf(l);
     const value = [p.hook, ...p.talking_points].filter(Boolean).join(' | ').slice(0, 1000);
-    return { record_id: Number(l.g8_contact_id), fields: [{ column_id: col, value }] };
-  });
-  if (!rows.length) return 0;
-  await g8.patch('/fields/values/batch', { rows, entity: 'contacts' });
-  return rows.length;
+    if (!value) continue;
+    await g8.patch(`/fields/${col}/values`, { record_id: Number(l.g8_contact_id), value, entity: 'contacts' });
+    n++;
+  }
+  return n;
 }
 
-/** Start a drafted sequence after the first enroll. 409 while transitional is fine (already starting). */
-export async function runSequence(g8SequenceId: string): Promise<void> {
-  await g8.post(`/sequences/${g8SequenceId}/run`, {});
+/**
+ * Start a drafted sequence after the first enroll. Live-verified: `POST /run` answers 400 "Sequence has no associated
+ * contact list" (we never bind a list, for safety), while `POST /status {status:'live'}` starts it. Try /run first.
+ */
+export async function runSequence(g8SequenceId: string): Promise<'run' | 'status'> {
+  try { await g8.post(`/sequences/${g8SequenceId}/run`, {}); return 'run'; }
+  catch { await g8.post(`/sequences/${g8SequenceId}/status`, { status: 'live' }); return 'status'; }
 }
 
 export async function archiveSequence(g8SequenceId: string): Promise<void> {

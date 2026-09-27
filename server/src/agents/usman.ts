@@ -15,11 +15,15 @@ import { previewLead, reviseSequenceCopy, SequenceCopy, writeSequenceCopy } from
 import { archiveSequence, createSequence, patchEmailSteps, resolveMailbox, runSequence, scheduleId, setLeadContext } from './usman/g8ops';
 import { buildPlan, collectLayerSteps, emailStepData, toG8Steps, toSummary, type PlanStep } from './usman/plan';
 import { findLeadByContact, findSequenceByG8, mapG8Event, recordTouch, setTracker, getTracker, statsLine } from './usman/track';
-import { aiTemplateEnabled, errMsg, safe, scrub, secondsPerDay } from './usman/util';
+import { aiTemplateEnabled, errMsg, firstName, safe, scrub, secondsPerDay } from './usman/util';
+import { firstTouchSender, renderFirstName } from './usman/first-touch';
+export { setFirstTouchSender, type FirstTouchSender, type FirstTouchInput } from './usman/first-touch';
 import { registerFire, registerScheduler } from '../scheduler';
 import { startSendPoll } from '../inbound/send-poll';
 
 export const G8_SEQUENCER_URL = 'https://app.graph8.com/sequencer';
+/** Verified record URL pattern (docs/verify/core.md). */
+export const g8SequenceUrl = (id: string) => `https://app.graph8.com/sequencer/sequence/${id}`;
 
 /** Payload stored on the launch_sequence approval (no PII). */
 export interface LaunchPayload extends JsonObject {
@@ -46,8 +50,17 @@ const STOP_STAGES = new Set(['replied', 'meeting', 'deal', 'won', 'lost', 'disqu
 async function openChecklist(ctx: RunCtx, title: string, items: ChecklistItem[]): Promise<Checklist | undefined> {
   return safe(async () => {
     const th = await ctx.thread();
+    if (!th.channel || !th.ts) return undefined; // Slack not attached (SLACK_DISABLED) — DB/portal only
     return slack.checklist('sdr', th.channel, title, items, th.ts);
   }, (e) => ctx.log.warn('checklist unavailable', { err: errMsg(e) }));
+}
+/** One line in this run's #sales-team thread; no-op when Slack is not attached. */
+async function postThread(ctx: RunCtx, text: string) {
+  await safe(async () => {
+    const th = await ctx.thread();
+    if (!th.channel || !th.ts) return;
+    await slack.postAs('sdr', th.channel, { text: scrub(text), threadTs: th.ts });
+  });
 }
 function mark(c: Checklist | undefined, key: string, state: ChecklistItem['state'], note?: string) {
   return safe(() => c?.set(key, state, note ? scrub(note) : undefined));
@@ -87,7 +100,7 @@ function cardInput(p: LaunchPayload, plan: LaunchCardInput['steps'],
     testNames: tests.map((l) => l.full_name),
     prospectCount: leads.length - tests.length,
     secPerDay: p.sec_per_day,
-    g8Url: G8_SEQUENCER_URL,
+    g8Url: g8SequenceUrl(p.g8_sequence_id),
     revision: p.revision || undefined,
     warnings,
   };
@@ -151,7 +164,9 @@ async function buildSequence(ctx: RunCtx): Promise<string> {
   const scale = settings.demo_time_scale ?? ws.demo_time_scale;
   const secPerDay = secondsPerDay(scale);
   const mailbox = await resolveMailbox(settings);
-  const name = `Graphi · ${new Date().toISOString().slice(0, 10)} · T-${ctx.task.number ?? ''}`.replace(/ · T-$/, '');
+  // No ISO date: digit runs like 2026-09-27 get redacted as a phone number by the PII scrubbers.
+  const day = new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+  const name = `Graphi outreach ${day}${ctx.task.number ? ` · T-${ctx.task.number}` : ''}`;
   const g8Steps = toG8Steps(plan, copy, secPerDay, aiTemplate);
   const created = await createSequence({ name, mailbox, steps: g8Steps, scheduleId: scheduleId(settings) });
   warnings.push(...created.warnings);
@@ -243,7 +258,8 @@ async function launch(ctx: RunCtx, approval: ApprovalRow, p: LaunchPayload): Pro
     }
   }
   if (enrolledLeads.length) {
-    await safe(() => runSequence(p.g8_sequence_id), (e) => ctx.log.info('sequence run skipped', { err: errMsg(e) }));
+    const how = await safe(() => runSequence(p.g8_sequence_id), (e) => problems.push(`sequence not started: ${errMsg(e)}`));
+    if (how) await ctx.step('tool', 'start_sequence', `graph8 sequence started via ${how}`);
   }
 
   const now = new Date().toISOString();
@@ -265,6 +281,7 @@ async function launch(ctx: RunCtx, approval: ApprovalRow, p: LaunchPayload): Pro
       data: { g8_sequence_id: p.g8_sequence_id },
     });
   }
+  if (enrolledLeads.length) await directFirstTouch(ctx, p, seq, enrolledLeads, problems);
 
   if (problems.length && !enrolledLeads.length) {
     await mark(c, 'card', 'fail', `launch failed: ${problems[0]}`);
@@ -274,14 +291,36 @@ async function launch(ctx: RunCtx, approval: ApprovalRow, p: LaunchPayload): Pro
   await mark(c, 'card', 'done', `launched · ${enrolled} test enrolled · ${previewOnly.length} preview only`);
   await mark(c, 'track', 'doing', statsLine({}));
   if (!c) {
-    await safe(async () => {
-      const th = await ctx.thread();
-      await slack.postAs('sdr', th.channel, { text: `🚀 Launched — ${enrolled} test lead(s) enrolled, ${previewOnly.length} prospect(s) preview only. I'll post sends here.`, threadTs: th.ts });
-    });
+    await postThread(ctx, `🚀 Launched — ${enrolled} test lead(s) enrolled, ${previewOnly.length} prospect(s) preview only. I'll post sends here.`);
   }
   await safe(() => ctx.report('update', 'Sequence launched',
     `${enrolled} test lead(s) enrolled in ${seq.name}; ${previewOnly.length} real prospect(s) preview only.${problems.length ? ` ⚠️ ${problems.join('; ')}` : ''}`));
   startSendPoll();
+}
+
+/** V3 fallback seam (see usman/first-touch.ts): email 1 sent directly when a guarded sender is registered. */
+async function directFirstTouch(ctx: RunCtx, p: LaunchPayload, seq: SequenceRow, leads: LeadRow[], problems: string[]) {
+  const send = firstTouchSender();
+  if (!send || ctx.settings.usman_direct_first_touch === false) return;
+  const copy = SequenceCopy.parse(p.copy);
+  const email = copy.emails[0];
+  const mailbox = await safe(() => resolveMailbox(ctx.settings));
+  for (const lead of leads) {
+    // Belt and braces: the registered sender must guard too, but never hand it a non-test lead.
+    if (!lead.is_test_contact || !lead.g8_contact_id) continue;
+    const fn = firstName(lead.full_name);
+    try {
+      const r = await send({
+        workspaceId: ctx.workspaceId, lead, g8ContactId: lead.g8_contact_id, g8SequenceId: p.g8_sequence_id,
+        subject: renderFirstName(email.subject, fn), body: renderFirstName(email.body, fn), mailbox,
+      });
+      if (!r.ok) { problems.push(`direct first touch failed${r.note ? `: ${scrub(r.note)}` : ''}`); continue; }
+      await recordTouch({ workspaceId: ctx.workspaceId, agentId: ctx.agentId, kind: 'email_sent', lead, seq, stepOrder: 1, source: 'direct', extra: { direct_ref: r.ref ?? null } });
+      await ctx.step('tool', 'direct_first_touch', `email 1 sent directly to ${scrub(lead.full_name)} (TEST)`);
+    } catch (e) {
+      problems.push(`direct first touch failed: ${errMsg(e)}`);
+    }
+  }
 }
 
 async function revise(ctx: RunCtx, approval: ApprovalRow, p: LaunchPayload, note: string): Promise<void> {
@@ -344,10 +383,7 @@ export const usman: AgentBrain = {
     if (decision === 'rejected') return cancel(ctx, approval, p);
     const text = (note ?? approval.decision_note ?? '').trim();
     if (!text) {
-      await safe(async () => {
-        const th = await ctx.thread();
-        await slack.postAs('sdr', th.channel, { text: 'What should I change? Reply in this thread and I will revise the sequence.', threadTs: th.ts });
-      });
+      await postThread(ctx, 'What should I change? Reply in this thread and I will revise the sequence.');
       return;
     }
     try { await revise(ctx, approval, p, text); }
