@@ -7,6 +7,7 @@ import type { AgentBrain, RunCtx } from '../contracts';
 import type { JsonObject, LeadSignal, UUID } from '../../../shared/types';
 import { g8 } from '../lib/g8';
 import { store } from '../lib/store';
+import { voiceLine } from '../lib/voice';
 import { listCard, type ListCardRow } from '../slack/cards/list';
 import { describeWidened, personaToPlan, toFilters, widen, type SearchFilter, type SearchPlan } from './bilal/filters';
 import { prospectKey, rank, score, toProspect, type Prospect } from './bilal/score';
@@ -284,6 +285,9 @@ async function run(ctx: RunCtx): Promise<string> {
   await pr.set('search', top.length ? 'done' : 'fail', `${total} matches in graph8`);
   await pr.set('dedupe', 'done', `skipped ${knownSkipped} known, ${crmSkipped} already in CRM`);
   if (!top.length) throw new Error(`No prospects found for "${plan.label}" even after widening.`);
+  // Wrap-up line in Bilal's voice: Gemini writes it while we save (3 s cap, template fallback) — no added latency.
+  const strong = top.filter((p) => (p.fit_score ?? 0) >= STRONG_FIT).length;
+  const doneLine = voiceLine('scout', `Found ${top.length} prospects for ${plan.label}, ${strong} strong fits. Passing the top ${Math.min(handoffN, top.length)} to Hira for research.`, { workspaceId: ctx.workspaceId, agentId: ctx.agentId, taskId: ctx.task.id });
 
   // 4. S5 save — one list per run + TEST contacts on first run (U5)
   await pr.set('save', 'doing');
@@ -381,7 +385,6 @@ async function run(ctx: RunCtx): Promise<string> {
   await pr.set('save', 'done', `list "${listName}"${tests.length ? ` + ${tests.length} TEST` : ''}`);
 
   // 6. card + handoff + delegate Hira
-  const strong = top.filter((p) => (p.fit_score ?? 0) >= STRONG_FIT).length;
   const widenedTxt = describeWidened(plan);
   const cardRows: ListCardRow[] = [
     ...top.map((p, i) => ({ name: p.full_name, title: p.job_title, company: p.company_name, fit: p.fit_score ?? null, reason: p.reason ?? '', url: g8ContactUrl(rows[i].g8_contact_id), toHira: i < handoffN })),
@@ -392,6 +395,7 @@ async function run(ctx: RunCtx): Promise<string> {
     signalsNote: intent.byDomain.size ? `${top.filter((p) => p.signals.length).length} with buying signals` : undefined,
   });
   await pr.post(card.text, card.blocks);
+  await pr.post(await doneLine);
 
   const handoffTop = leadIds.slice(0, handoffN);
   const backfill = leadIds.slice(handoffN);

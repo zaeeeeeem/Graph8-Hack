@@ -7,6 +7,7 @@ import type { AgentBrain, RunCtx } from '../contracts';
 import type { Channel, DisqualifyReason, JsonObject, LeadContactRow, LeadRow, LeadSignal, UUID } from '../../../shared/types';
 import { g8 } from '../lib/g8';
 import { store } from '../lib/store';
+import { voiceLine } from '../lib/voice';
 import { researchCard, type ResearchCardRow } from '../slack/cards/research';
 import { wokenByChild } from './bilal';
 import { asArray, collectHandles, eachLayer, errMsg, g8ContactUrl, normLinkedin, openProgress, pool, scrubPii, type Progress } from './bilal/util';
@@ -347,13 +348,16 @@ async function run(ctx: RunCtx): Promise<string> {
   }
   await pr.set('hooks', 'done', `${all.filter((w) => w.hook?.via === 'gemini').length} Gemini · ${all.filter((w) => w.hook?.via === 'fallback').length} fact-template`);
 
-  for (const w of all) await persist(ctx, w);
-
   const ok = all.filter((w) => !w.dq);
   const okReal = ok.filter((w) => !w.lead.is_test_contact);
   const dqd = all.filter((w) => w.dq);
   const emails = ok.filter((w) => w.channels.includes('email')).length;
   const pending = ok.filter((w) => w.pending).length;
+  // Wrap-up line in Hira's voice: Gemini writes it while we persist (3 s cap, template fallback) — no added latency.
+  const doneLine = voiceLine('researcher', `Researched ${ok.length} leads, ${emails} with a usable email${pending ? ` and ${pending} still pending` : ''}. Handing them to Usman for the sequence.`, { workspaceId: ctx.workspaceId, agentId: ctx.agentId, taskId: ctx.task.id });
+
+  for (const w of all) await persist(ctx, w);
+
   const cardRows: ResearchCardRow[] = all.map((w) => ({
     name: w.lead.full_name, company: w.lead.company_name ?? '', hook: w.hook?.why_now ?? (w.dq ? '' : 'research pending'),
     channels: w.channels, emailStatus: emailStatus(w), fit: w.lead.fit_score, url: g8ContactUrl(w.lead.g8_contact_id),
@@ -361,6 +365,7 @@ async function run(ctx: RunCtx): Promise<string> {
   }));
   const card = researchCard({ rows: cardRows, pendingNote: pending ? `${pending} contact lookups still running — leads update automatically` : undefined, warnings: env.warnings });
   await pr.post(card.text, card.blocks);
+  await pr.post(await doneLine);
 
   const body = `${okReal.length} researched${ok.length > okReal.length ? ` (+${ok.length - okReal.length} TEST)` : ''}, ${emails} emails usable${dqd.length ? `, ${dqd.length} replaced` : ''}${pending ? `, ${pending} pending` : ''}.`;
   await ctx.report('handoff', `Hira → Usman: ${ok.length} leads researched`, body, {

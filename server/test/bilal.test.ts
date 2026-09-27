@@ -203,9 +203,13 @@ describe('bilal.run', () => {
     expect(body).not.toMatch(PII);
     expect(summary).toContain('Found 10');
 
-    const card = m.slack.postAs.mock.calls.at(-1)!;
+    const card = m.slack.postAs.mock.calls.find((c: any[]) => c[2].blocks)!;
     expect(card[2].threadTs).toBe('111.1');
     expect(JSON.stringify(card[2])).not.toMatch(PII);
+    // wrap-up status line in the agent's voice (Gemini mocked out here, so the template)
+    const line = m.slack.postAs.mock.calls.at(-1)![2];
+    expect(line.blocks).toBeUndefined();
+    expect(line.text).toMatch(/Found 10 prospects/);
     expect(m.store.patchSettings).toHaveBeenCalledWith(WS, { last_run_list_id: 77 });
   });
 
