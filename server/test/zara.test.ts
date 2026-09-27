@@ -90,6 +90,7 @@ vi.mock('../src/lib/g8', () => ({
   },
 }));
 vi.mock('../src/lib/llm', () => ({ llm: { text: vi.fn(), json: vi.fn() } }));
+vi.mock('../src/lib/voice', () => ({ voiceLine: vi.fn(async (_role: string, fallback: string) => `voiced: ${fallback}`) }));
 vi.mock('../src/lib/slack', () => ({
   slack: {
     postAs: vi.fn(async () => ({ ts: '1.1', channel: 'CTEAM' })), update: vi.fn(),
@@ -102,6 +103,8 @@ vi.mock('../src/agents/runtime', () => ({ runtime: { register: vi.fn(), enqueue:
 
 import { g8 } from '../src/lib/g8';
 import { llm } from '../src/lib/llm';
+import { slack } from '../src/lib/slack';
+import { voiceLine } from '../src/lib/voice';
 import { layers } from '../src/layers';
 import { runtime } from '../src/agents/runtime';
 import { bus } from '../src/lib/bus';
@@ -318,6 +321,13 @@ describe('handle_reply playbook', () => {
     await zara.run(makeCtx('handle_reply', replyInput()));
     expect(mg8.sendReplyGuarded).not.toHaveBeenCalled();
     expect(h.state.fake.tables.leads[0]).toMatchObject({ do_not_contact: true, stage: 'disqualified', disqualify_reason: 'unsubscribed' });
+  });
+
+  it('status line goes out in Zara\'s voice without blocking the run', async () => {
+    mllm.json.mockResolvedValue({ intent: 'unsubscribe' });
+    await zara.run(makeCtx('handle_reply', replyInput()));
+    expect(voiceLine).toHaveBeenCalledWith('closer', expect.stringContaining('marked do-not-contact'), expect.objectContaining({ workspaceId: expect.any(String) }));
+    await vi.waitFor(() => expect((slack.postAs as any).mock.calls.some((c: any[]) => /^voiced: .*marked do-not-contact/.test(c[2]?.text))).toBe(true));
   });
 
   it('LLM down → keyword fallback still answers an interested reply', async () => {

@@ -27,6 +27,7 @@ import { createDeal } from './zara/deal';
 import { mapDisposition } from './zara/voice';
 import { preview, scrub, stripQuoted } from './zara/pii';
 import { replyApprovalBlocks, replyStoryLine } from '../slack/cards/reply';
+import { voiceLine } from '../lib/voice';
 import { winBlocks, winText, usd } from '../slack/cards/win';
 
 type EventCtx = Omit<RunCtx, 'task' | 'runId'> & { task?: TaskRow };
@@ -64,6 +65,16 @@ async function postInThread(ctx: RunCtx, text: string) {
     const th = await ctx.thread();
     await slack.postAs('closer', th.channel, { text: scrub(text), threadTs: th.ts });
   } catch { /* ignore */ }
+}
+
+/**
+ * Conversational status line in Zara's own voice. Fire-and-forget, so the Gemini rewrite never delays the playbook;
+ * the cap is 8 s (not the 3 s default) because Gemini took 5.5–6.7 s live and 3 s always fell back to the template.
+ */
+function sayInVoice(ctx: RunCtx, template: string): void {
+  void voiceLine('closer', template, { workspaceId: ctx.workspaceId, agentId: ctx.agentId, taskId: ctx.task.id, timeoutMs: 8000 })
+    .catch(() => template)
+    .then((line) => postInThread(ctx, line));
 }
 
 async function workspaceInfo(workspaceId: UUID) {
@@ -298,12 +309,12 @@ async function handleReply(ctx: RunCtx): Promise<string> {
     founderName: info.founderName, companyName: info.companyName, bookingLink: link,
   };
   const llmOpts = { agentId: ctx.agentId, workspaceId: ctx.workspaceId, taskId: ctx.task.id };
-  const say = (action: string) => postInThread(ctx, replyStoryLine({ leadName: lead.full_name, intent: cls.intent, action }));
+  const say = (action: string) => sayInVoice(ctx, replyStoryLine({ leadName: lead.full_name, intent: cls.intent, action }));
 
   if (cls.intent === 'unsubscribe') {
     await markDoNotContact(ctx, lead, 'unsubscribed');
     await cl.set('act', 'done', 'do-not-contact, no reply sent');
-    await say('marked do-not-contact, no reply');
+    say('marked do-not-contact, no reply');
     return `${lead.full_name}: unsubscribe → do-not-contact`;
   }
 
@@ -314,7 +325,7 @@ async function handleReply(ctx: RunCtx): Promise<string> {
       summary: `Out of office — re-contact after ${back}`, data: { recontact_at: back, reason: 'out_of_office' },
     });
     await cl.set('act', 'done', `re-contact after ${back}`);
-    await say(`paused until ${back}`);
+    say(`paused until ${back}`);
     return `${lead.full_name}: out of office until ${back}`;
   }
 
@@ -342,7 +353,7 @@ async function handleReply(ctx: RunCtx): Promise<string> {
       try {
         const summary = await onMeetingBooked(ctx, lead, { meetingId: booked.meetingId, scheduledAt: booked.scheduledAt, source: 'zara_booking' });
         await cl.set('deal', 'done', summary);
-        await say(`booked ${when} · deal created`);
+        say(`booked ${when} · deal created`);
         return `${lead.full_name}: interested → ${summary}`;
       } catch (e) {
         await cl.set('deal', 'fail', 'graph8 deal create failed');
@@ -363,7 +374,7 @@ async function handleReply(ctx: RunCtx): Promise<string> {
       summary: `Not now — re-contact after ${later}`, data: { recontact_at: later, reason: 'not_now' },
     });
     await cl.set('act', 'done', `polite reply sent, re-contact ${later}`);
-    await say('sent a polite reply, will check back later');
+    say('sent a polite reply, will check back later');
     return `${lead.full_name}: not now → polite reply`;
   }
 
@@ -377,7 +388,7 @@ async function handleReply(ctx: RunCtx): Promise<string> {
     summary: `Proposed ${slots.length} time(s)${link ? ' + booking link' : ''}`, data: { slots: slots.map((s) => s.iso), booking_link: !!link },
   });
   await cl.set('act', 'done', `sent ${slots.length} slot(s)${link ? ' + booking link' : ''}`);
-  await say(`sent ${slots.length ? slots.map((s) => s.label).join(' / ') : 'a reply'}${link ? ' + booking link' : ''}`);
+  say(`sent ${slots.length ? slots.map((s) => s.label).join(' / ') : 'a reply'}${link ? ' + booking link' : ''}`);
   return `${lead.full_name}: interested → proposed times`;
 }
 
@@ -397,7 +408,7 @@ async function requestReplyApproval(ctx: RunCtx, lead: LeadRow, cls: Classificat
     lead_id: lead.id, intent: cls.intent, subject: p.subject ?? null, reply_preview: preview(p.replyText, 1200), revision: p.revision ?? 0,
   } as JsonObject, blocks, 'Send');
   await p.cl.set('act', 'paused', `waiting for your OK in #sales-hq (${why})`);
-  await postInThread(ctx, replyStoryLine({ leadName: lead.full_name, intent: cls.intent, action: 'draft sent to #sales-hq for approval' }));
+  sayInVoice(ctx, replyStoryLine({ leadName: lead.full_name, intent: cls.intent, action: 'draft sent to #sales-hq for approval' }));
   return `${lead.full_name}: ${cls.intent} → approval requested`;
 }
 
