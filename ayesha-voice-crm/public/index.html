@@ -5,358 +5,161 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Ayesha — graph8 Voice CRM Assistant</title>
   <meta name="description" content="Talk to Ayesha, your AI-powered voice CRM assistant built on graph8. Ask about deals, clients, and meetings in real time." />
+  <meta name="theme-color" content="#000000" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
-  <style>
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
-    :root {
-      --bg:         #07091a;
-      --bg2:        #0d1128;
-      --glass:      rgba(255,255,255,0.04);
-      --glass-b:    rgba(255,255,255,0.08);
-      --purple:     #8b5cf6;
-      --cyan:       #06b6d4;
-      --green:      #10b981;
-      --amber:      #f59e0b;
-      --red:        #ef4444;
-      --text:       #f0f4ff;
-      --muted:      #8892aa;
-      --border:     rgba(255,255,255,0.07);
-    }
-
-    body {
-      font-family: 'Inter', sans-serif;
-      background: var(--bg);
-      color: var(--text);
-      min-height: 100vh;
-      display: flex;
-      flex-direction: column;
-      overflow: hidden;
-    }
-
-    /* ── Background noise + gradient ── */
-    body::before {
-      content: '';
-      position: fixed; inset: 0; z-index: 0;
-      background:
-        radial-gradient(ellipse 80% 60% at 50% -10%, rgba(139,92,246,0.18) 0%, transparent 65%),
-        radial-gradient(ellipse 60% 40% at 80% 100%, rgba(6,182,212,0.12) 0%, transparent 60%);
-      pointer-events: none;
-    }
-
-    /* ── Layout ── */
-    .app { position: relative; z-index: 1; display: grid; grid-template-rows: auto 1fr auto; min-height: 100vh; }
-
-    header {
-      padding: 18px 32px;
-      display: flex; align-items: center; gap: 12px;
-      border-bottom: 1px solid var(--border);
-      backdrop-filter: blur(12px);
-    }
-    .logo-dot {
-      width: 10px; height: 10px; border-radius: 50%;
-      background: linear-gradient(135deg, var(--purple), var(--cyan));
-      box-shadow: 0 0 8px var(--purple);
-    }
-    header h1 { font-size: 16px; font-weight: 600; letter-spacing: .5px; }
-    header span { font-size: 13px; color: var(--muted); margin-left: 4px; }
-    .status-badge {
-      margin-left: auto; display: flex; align-items: center; gap: 6px;
-      font-size: 12px; color: var(--muted);
-    }
-    .status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
-    .status-dot.live { background: var(--green); box-shadow: 0 0 6px var(--green); animation: pulse-dot 2s infinite; }
-
-    /* ── Main grid ── */
-    main {
-      display: grid;
-      grid-template-columns: 1fr 360px 1fr;
-      gap: 24px;
-      padding: 28px 32px;
-      align-items: start;
-      overflow-y: auto;
-    }
-
-    /* ── Glass card ── */
-    .card {
-      background: var(--glass);
-      border: 1px solid var(--border);
-      border-radius: 16px;
-      backdrop-filter: blur(16px);
-      padding: 20px;
-    }
-    .card-title {
-      font-size: 11px; font-weight: 600; letter-spacing: 1px;
-      text-transform: uppercase; color: var(--muted); margin-bottom: 16px;
-    }
-
-    /* ── Transcript panel (left) ── */
-    #transcript-panel { max-height: 70vh; display: flex; flex-direction: column; }
-    #transcript-body { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; min-height: 200px; }
-    .msg {
-      padding: 10px 14px; border-radius: 12px; font-size: 13.5px; line-height: 1.55;
-      max-width: 90%; animation: fadeIn .3s ease;
-    }
-    .msg.user { background: rgba(139,92,246,0.18); border: 1px solid rgba(139,92,246,0.25); align-self: flex-end; }
-    .msg.ayesha { background: rgba(6,182,212,0.10); border: 1px solid rgba(6,182,212,0.18); align-self: flex-start; }
-    .msg .speaker { font-size: 10px; font-weight: 600; letter-spacing: .8px; text-transform: uppercase; margin-bottom: 4px; }
-    .msg.user .speaker { color: var(--purple); }
-    .msg.ayesha .speaker { color: var(--cyan); }
-    .empty-state { color: var(--muted); font-size: 13px; text-align: center; padding: 32px 0; line-height: 1.7; }
-
-    /* ── Center orb ── */
-    .center-col { display: flex; flex-direction: column; align-items: center; gap: 24px; padding-top: 12px; }
-
-    .orb-wrap { position: relative; width: 180px; height: 180px; display: flex; align-items: center; justify-content: center; }
-    .orb-ring {
-      position: absolute; inset: 0; border-radius: 50%;
-      border: 1.5px solid rgba(139,92,246,0.3);
-      animation: spin 8s linear infinite;
-    }
-    .orb-ring2 {
-      position: absolute; inset: 12px; border-radius: 50%;
-      border: 1.5px solid rgba(6,182,212,0.25);
-      animation: spin 12s linear infinite reverse;
-    }
-    .orb {
-      width: 130px; height: 130px; border-radius: 50%;
-      background: radial-gradient(circle at 35% 35%, rgba(139,92,246,0.9), rgba(6,182,212,0.7) 60%, rgba(7,9,26,0.8));
-      box-shadow:
-        0 0 40px rgba(139,92,246,0.4),
-        0 0 80px rgba(139,92,246,0.15),
-        inset 0 0 30px rgba(255,255,255,0.05);
-      display: flex; align-items: center; justify-content: center;
-      font-size: 40px;
-      transition: transform .2s ease, box-shadow .2s ease;
-    }
-    .orb.listening {
-      animation: orb-pulse 1.2s ease-in-out infinite;
-      box-shadow: 0 0 60px rgba(139,92,246,0.6), 0 0 100px rgba(139,92,246,0.2);
-    }
-    .orb.speaking {
-      animation: orb-speak .6s ease-in-out infinite alternate;
-      box-shadow: 0 0 60px rgba(6,182,212,0.6), 0 0 100px rgba(6,182,212,0.2);
-    }
-
-    .agent-name {
-      text-align: center;
-    }
-    .agent-name h2 { font-size: 28px; font-weight: 700; letter-spacing: -0.5px; }
-    .agent-name p { font-size: 13px; color: var(--muted); margin-top: 4px; }
-
-    .call-status {
-      font-size: 13px; color: var(--muted); text-align: center; min-height: 20px;
-      transition: color .3s ease;
-    }
-    .call-status.active { color: var(--cyan); }
-    .call-status.error { color: var(--red); }
-
-    /* ── Call button ── */
-    #callBtn {
-      width: 72px; height: 72px; border-radius: 50%; border: none; cursor: pointer;
-      background: linear-gradient(135deg, var(--purple), var(--cyan));
-      box-shadow: 0 0 24px rgba(139,92,246,0.5);
-      font-size: 26px;
-      display: flex; align-items: center; justify-content: center;
-      transition: transform .15s ease, box-shadow .15s ease;
-    }
-    #callBtn:hover { transform: scale(1.08); box-shadow: 0 0 36px rgba(139,92,246,0.7); }
-    #callBtn:active { transform: scale(.96); }
-    #callBtn.active {
-      background: linear-gradient(135deg, var(--red), #b91c1c);
-      box-shadow: 0 0 24px rgba(239,68,68,0.5);
-    }
-    #callBtn:disabled { opacity: 0.5; cursor: not-allowed; }
-
-    .btn-label { font-size: 11px; color: var(--muted); letter-spacing: .5px; }
-
-    /* ── Waveform bars ── */
-    .wave { display: flex; align-items: center; gap: 3px; height: 28px; }
-    .wave-bar {
-      width: 3px; border-radius: 2px;
-      background: linear-gradient(180deg, var(--purple), var(--cyan));
-      animation: wave-idle 1.4s ease-in-out infinite;
-    }
-    .wave-bar:nth-child(2) { animation-delay: .1s; }
-    .wave-bar:nth-child(3) { animation-delay: .2s; }
-    .wave-bar:nth-child(4) { animation-delay: .3s; }
-    .wave-bar:nth-child(5) { animation-delay: .4s; }
-    .wave-bar:nth-child(6) { animation-delay: .3s; }
-    .wave-bar:nth-child(7) { animation-delay: .2s; }
-    .wave-bar:nth-child(8) { animation-delay: .1s; }
-    .wave.active .wave-bar { animation: wave-active 0.5s ease-in-out infinite alternate; }
-    .wave.active .wave-bar:nth-child(2) { animation-delay: .08s; }
-    .wave.active .wave-bar:nth-child(3) { animation-delay: .16s; }
-    .wave.active .wave-bar:nth-child(4) { animation-delay: .06s; }
-    .wave.active .wave-bar:nth-child(5) { animation-delay: .14s; }
-    .wave.active .wave-bar:nth-child(6) { animation-delay: .1s; }
-    .wave.active .wave-bar:nth-child(7) { animation-delay: .04s; }
-    .wave.active .wave-bar:nth-child(8) { animation-delay: .12s; }
-
-    /* ── Bilal activity log (right) ── */
-    #bilal-panel { max-height: 70vh; display: flex; flex-direction: column; }
-    #bilal-log { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; min-height: 200px; }
-    .log-item {
-      display: flex; align-items: flex-start; gap: 10px;
-      padding: 10px 12px; border-radius: 10px;
-      background: rgba(255,255,255,0.03); border: 1px solid var(--border);
-      font-size: 12.5px; animation: fadeIn .3s ease;
-    }
-    .log-icon { font-size: 15px; line-height: 1; margin-top: 1px; flex-shrink: 0; }
-    .log-body { flex: 1; }
-    .log-fn { font-weight: 600; color: var(--cyan); font-size: 11.5px; letter-spacing: .3px; }
-    .log-detail { color: var(--muted); margin-top: 2px; font-size: 11px; }
-    .log-time { font-size: 10px; color: var(--muted); margin-left: auto; white-space: nowrap; padding-top: 2px; }
-    .log-status { display: inline-block; width: 6px; height: 6px; border-radius: 50%; margin-right: 5px; vertical-align: middle; }
-    .log-status.ok { background: var(--green); }
-    .log-status.busy { background: var(--amber); animation: pulse-dot 1s infinite; }
-    .log-status.err { background: var(--red); }
-
-    /* ── Footer ── */
-    footer {
-      padding: 14px 32px;
-      display: flex; align-items: center; justify-content: space-between;
-      border-top: 1px solid var(--border);
-      font-size: 11px; color: var(--muted);
-    }
-    .footer-pills { display: flex; gap: 8px; }
-    .pill {
-      padding: 4px 10px; border-radius: 20px; font-size: 10.5px; font-weight: 500;
-      border: 1px solid var(--border); color: var(--muted);
-      display: flex; align-items: center; gap: 5px;
-    }
-    .pill .dot { width: 5px; height: 5px; border-radius: 50%; }
-    .pill.real .dot { background: var(--green); }
-    .pill.mock .dot { background: var(--amber); }
-
-    /* ── Animations ── */
-    @keyframes pulse-dot { 0%,100% { opacity:1; } 50% { opacity:.3; } }
-    @keyframes spin { to { transform: rotate(360deg); } }
-    @keyframes orb-pulse {
-      0%,100% { transform: scale(1); }
-      50% { transform: scale(1.06); }
-    }
-    @keyframes orb-speak {
-      from { transform: scale(1); }
-      to { transform: scale(1.04); }
-    }
-    @keyframes wave-idle {
-      0%,100% { height: 6px; }
-      50% { height: 12px; }
-    }
-    @keyframes wave-active {
-      from { height: 6px; }
-      to { height: calc(6px + var(--h, 20px)); }
-    }
-    @keyframes fadeIn { from { opacity:0; transform:translateY(4px); } to { opacity:1; transform:translateY(0); } }
-
-    /* scrollbar */
-    ::-webkit-scrollbar { width: 4px; }
-    ::-webkit-scrollbar-track { background: transparent; }
-    ::-webkit-scrollbar-thumb { background: rgba(255,255,255,.1); border-radius: 4px; }
-
-    /* suggestions */
-    .suggestions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
-    .suggestion {
-      padding: 6px 12px; border-radius: 20px; font-size: 12px;
-      border: 1px solid rgba(139,92,246,0.3); color: var(--muted);
-      cursor: pointer; transition: all .15s ease; background: rgba(139,92,246,0.06);
-    }
-    .suggestion:hover { border-color: var(--purple); color: var(--text); background: rgba(139,92,246,0.12); }
-
-    @media (max-width: 900px) {
-      main { grid-template-columns: 1fr; grid-template-rows: auto auto auto; }
-      #transcript-panel, #bilal-panel { max-height: 40vh; }
-    }
-  </style>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="portal.css" />
 </head>
 <body>
 <div class="app">
+  <div class="page-glow" aria-hidden="true"><span class="g-orange"></span><span class="g-blue"></span></div>
 
-  <!-- ── Header ── -->
-  <header>
-    <div class="logo-dot"></div>
-    <h1>Ayesha</h1>
-    <span>/ graph8 Voice CRM</span>
-    <div class="status-badge">
-      <div class="status-dot" id="conn-dot"></div>
-      <span id="conn-label">Disconnected</span>
+  <!-- ── Sidebar (portal nav + AI team) ── -->
+  <aside class="sidebar" aria-label="Portal navigation">
+    <div class="amb blue" aria-hidden="true"></div>
+    <div class="amb orange" aria-hidden="true"></div>
+
+    <div class="brand">
+      <span class="logo-orb" aria-hidden="true"></span>
+      <span class="brand-name">Graphi</span>
     </div>
-  </header>
+
+    <div class="workspace">
+      <p>graph8 Voice CRM</p>
+      <p>talk to your pipeline</p>
+    </div>
+
+    <nav class="nav">
+      <span class="nav-item active" aria-current="page">
+        <svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>
+        Voice call
+      </span>
+    </nav>
+
+    <div class="team">
+      <div class="team-head">
+        <p><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"/></svg>AI team</p>
+        <span>2 agents</span>
+      </div>
+      <ul>
+        <li class="team-row on">
+          <span class="avatar"><img src="avatars/ayesha.png" alt="" /><span class="dot active"></span></span>
+          <span class="who"><b>Ayesha</b><small class="tone-active">Head of Sales · on voice</small></span>
+        </li>
+        <li class="team-row">
+          <span class="avatar"><img src="avatars/bilal.png" alt="" /><span class="dot success"></span></span>
+          <span class="who"><b>Bilal</b><small>Scout · fetches CRM data</small></span>
+        </li>
+      </ul>
+    </div>
+
+    <div class="side-foot">
+      <div class="line">Powered by Vapi · Deepgram<span class="demo">Demo</span></div>
+    </div>
+  </aside>
 
   <!-- ── Main ── -->
-  <main>
+  <div class="main">
+    <div class="scroll">
 
-    <!-- LEFT: Transcript -->
-    <div class="card" id="transcript-panel">
-      <div class="card-title">💬 Live Conversation</div>
-      <div id="transcript-body">
-        <div class="empty-state" id="transcript-empty">
-          Start a call to see the<br>live transcript here.
+      <!-- Header -->
+      <header class="page-head">
+        <div class="title">
+          <h1>Voice CRM</h1>
+          <span class="sub">/ Ayesha</span>
         </div>
-      </div>
-      <div class="suggestions" id="suggestions">
-        <div class="suggestion" onclick="sendSuggestion(this)">What are my top clients?</div>
-        <div class="suggestion" onclick="sendSuggestion(this)">Status of Northwind deal?</div>
-        <div class="suggestion" onclick="sendSuggestion(this)">What meetings do I have today?</div>
-        <div class="suggestion" onclick="sendSuggestion(this)">Give me a pipeline summary</div>
-        <div class="suggestion" onclick="sendSuggestion(this)">Which deals are going cold?</div>
-      </div>
-    </div>
-
-    <!-- CENTER: Orb + Controls -->
-    <div class="center-col">
-      <div class="orb-wrap">
-        <div class="orb-ring"></div>
-        <div class="orb-ring2"></div>
-        <div class="orb" id="orb">🎙️</div>
-      </div>
-
-      <div class="agent-name">
-        <h2>Ayesha</h2>
-        <p>graph8 Voice CRM Assistant</p>
-      </div>
-
-      <div class="wave" id="wave">
-        <div class="wave-bar" style="--h:14px"></div>
-        <div class="wave-bar" style="--h:22px"></div>
-        <div class="wave-bar" style="--h:18px"></div>
-        <div class="wave-bar" style="--h:28px"></div>
-        <div class="wave-bar" style="--h:20px"></div>
-        <div class="wave-bar" style="--h:26px"></div>
-        <div class="wave-bar" style="--h:16px"></div>
-        <div class="wave-bar" style="--h:10px"></div>
-      </div>
-
-      <div class="call-status" id="callStatus">Click below to start a call</div>
-
-      <button id="callBtn" onclick="toggleCall()" title="Start / End Call">📞</button>
-      <div class="btn-label" id="btnLabel">Start Call</div>
-    </div>
-
-    <!-- RIGHT: Bilal log -->
-    <div class="card" id="bilal-panel">
-      <div class="card-title">🤖 Bilal — Data Agent</div>
-      <div id="bilal-log">
-        <div class="empty-state" id="bilal-empty">
-          Bilal will fetch CRM data<br>as Ayesha needs it.
+        <div class="actions">
+          <div class="status-badge">
+            <div class="status-dot" id="conn-dot"></div>
+            <span id="conn-label">Disconnected</span>
+          </div>
         </div>
-      </div>
-    </div>
+      </header>
 
-  </main>
+      <main class="grid">
 
-  <!-- ── Footer ── -->
-  <footer>
-    <span>Powered by Vapi · Deepgram · graph8</span>
-    <div class="footer-pills">
-      <div class="pill real"><div class="dot"></div>Vapi Voice — Real</div>
-      <div class="pill real"><div class="dot"></div>Deepgram STT — Real</div>
-      <div class="pill mock"><div class="dot"></div>CRM Data — Mocked</div>
+        <!-- LEFT: Transcript -->
+        <section class="card" id="transcript-panel" aria-label="Live conversation">
+          <header class="card-title">
+            <h2><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></svg>Live conversation</h2>
+            <span class="tag">Transcript</span>
+          </header>
+          <div class="card-body">
+            <div id="transcript-body">
+              <div class="empty-state" id="transcript-empty">
+                Start a call to see the<br>live transcript here.
+              </div>
+            </div>
+            <div class="suggestions" id="suggestions">
+              <div class="suggestion" onclick="sendSuggestion(this)">What are my top clients?</div>
+              <div class="suggestion" onclick="sendSuggestion(this)">Status of Northwind deal?</div>
+              <div class="suggestion" onclick="sendSuggestion(this)">What meetings do I have today?</div>
+              <div class="suggestion" onclick="sendSuggestion(this)">Give me a pipeline summary</div>
+              <div class="suggestion" onclick="sendSuggestion(this)">Which deals are going cold?</div>
+            </div>
+          </div>
+        </section>
+
+        <!-- CENTER: Orb + Controls -->
+        <section class="card center-col" aria-label="Call controls">
+          <div class="orb-wrap">
+            <div class="orb-ring"></div>
+            <div class="orb-ring2"></div>
+            <div class="orb" id="orb">🎙️</div>
+          </div>
+
+          <div class="agent-name">
+            <h2>Ayesha</h2>
+            <p>graph8 Voice CRM Assistant</p>
+          </div>
+
+          <div class="wave" id="wave">
+            <div class="wave-bar" style="--h:14px"></div>
+            <div class="wave-bar" style="--h:22px"></div>
+            <div class="wave-bar" style="--h:18px"></div>
+            <div class="wave-bar" style="--h:28px"></div>
+            <div class="wave-bar" style="--h:20px"></div>
+            <div class="wave-bar" style="--h:26px"></div>
+            <div class="wave-bar" style="--h:16px"></div>
+            <div class="wave-bar" style="--h:10px"></div>
+          </div>
+
+          <div class="call-status" id="callStatus">Click below to start a call</div>
+
+          <button id="callBtn" onclick="toggleCall()" title="Start / End Call">📞</button>
+          <div class="btn-label" id="btnLabel">Start Call</div>
+        </section>
+
+        <!-- RIGHT: Bilal log -->
+        <section class="card" id="bilal-panel" aria-label="Bilal data agent">
+          <header class="card-title">
+            <h2><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/><path d="M3 12a9 3 0 0 0 18 0"/></svg>Bilal — data agent</h2>
+            <span class="tag mono">/api/bilal</span>
+          </header>
+          <div class="card-body">
+            <div id="bilal-log">
+              <div class="empty-state" id="bilal-empty">
+                Bilal will fetch CRM data<br>as Ayesha needs it.
+              </div>
+            </div>
+          </div>
+        </section>
+
+      </main>
+
+      <!-- Footer -->
+      <footer>
+        <span>Powered by Vapi · Deepgram · graph8</span>
+        <div class="footer-pills">
+          <div class="tag real"><div class="dot"></div>Vapi Voice — Real</div>
+          <div class="tag real"><div class="dot"></div>Deepgram STT — Real</div>
+          <div class="tag mock"><div class="dot"></div>CRM Data — Mocked</div>
+        </div>
+      </footer>
+
     </div>
-  </footer>
+  </div>
 
 </div>
 
