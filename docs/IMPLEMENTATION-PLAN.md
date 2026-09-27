@@ -1,3 +1,5 @@
+> **Superseded 2026-09-27 06:40 PKT by `docs/BUILD-PLAN.md`** (written after the agent specs and live checks). Kept for history; do not build from this file.
+
 # Implementation Plan — AI Sales Team in Slack (start → demo)
 
 Brief: `docs/IDEA.md`. Owners: **A** = agents + graph8, **B** = Slack + Agent Office, **C** = plumbing + demo + pitch.

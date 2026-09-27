@@ -1,6 +1,6 @@
 # Supabase schema — AI Sales Team (Slack + Agent Office)
 
-Files: `supabase/migrations/001_init.sql` (schema, RLS, views, realtime, triggers) ·
+Files: `supabase/migrations/001_init.sql` (schema, RLS, views, realtime, triggers) · `002_portal_run_steps.sql` (activity feed) ·
 `supabase/seed.sql` (demo workspace 8x.social + 5 agents + fake data) · `shared/types.ts` (TS contract).
 Validated on PGlite (Postgres 18) — migration + seed run twice, RLS checked as `anon`, `types.ts`
 column/enum sets diffed against `information_schema`.
@@ -21,7 +21,7 @@ erDiagram
   tasks      }o--o| leads : "lead_id"
   tasks      }o--o| sequences : "sequence_id"
   agents     ||--o{ agent_runs : "heartbeats"
-  agent_runs ||--o{ run_steps : "server-only"
+  agent_runs ||--o{ run_steps : "safe cols only"
   tasks      |o--o{ agent_runs : ""
   agents     ||--o{ reports : "from / to"
   agents     ||--o{ approvals : "requested_by"
@@ -38,9 +38,10 @@ erDiagram
 
 Portal-safe (anon/authenticated SELECT when workspace `is_demo` or you are a member):
 `workspaces, agents, tasks, agent_runs, reports, approvals, sequences, leads, lead_events, credit_events`
-+ views `portal_agents, portal_pipeline, portal_needs_you, portal_today`.
++ views `portal_agents, portal_pipeline, portal_needs_you, portal_today, portal_activity`
++ `run_steps` **safe columns only** (column grants; see §3 decision 15).
 Server-only (RLS on, **no policies**, grants revoked): `workspace_secrets, contact_allowlist, lead_contacts,
-run_steps, inbound_events`. `workspace_members`: a user sees only their own rows.
+inbound_events` + `run_steps.args/result/error`. `workspace_members`: a user sees only their own rows.
 
 ## 2. Tables
 
@@ -53,7 +54,7 @@ run_steps, inbound_events`. `workspace_members`: a user sees only their own rows
 | `agents` | Org chart. `reports_to` self-FK; NULL = reports to the founder. | `role` (fixed set), `name` = Slack persona (unique per workspace), `emoji`/`color`/`avatar_url` shared by Slack + portal, `status`, `current_task_id`, daily credit budget + `spent_today_credits` + `spend_day`, optional `model`/`instructions`/`tools` overrides. |
 | `tasks` | Unit of work = **one Slack thread**. Parent/child = delegation. | `number` per workspace (trigger), `kind`, `status`, **routable block** (`blocked_on` ∈ founder/approval/task/graph8/connection/budget/lead + `blocked_reason` + `blocked_by_task_id`/`approval_id`, CHECKed), `slack_channel`+`slack_thread_ts` (unique), `input`/`output` jsonb, `result_summary`, checkout lock (`locked_by_run_id`, `locked_at`), `root_task_id` (trigger). |
 | `agent_runs` | One row per heartbeat (stateless wake). | `trigger` (slack_message / slack_action / slash_command / cron / webhook / delegation / approval / system / manual) + `trigger_ref`, tokens, `tool_call_count`, `credits_used`, `summary`. |
-| `run_steps` | Tool/LLM call log per run. | Server-only (args may hold prospect emails). |
+| `run_steps` | Step log per run (tool/llm/slack/note) = portal activity feed. | `summary` = stored generated column from `result->>'summary'` (PII-redacted by the server). Portal may read `id, run_id, workspace_id, seq, kind, name, summary, ok, credits_used, duration_ms, created_at`; `args`/`result`/`error` stay private (may hold prospect details). |
 | `reports` | Messages agents post **up the chain** (also mirrored to Slack). | `from_agent_id` → `to_agent_id` (NULL = founder). `kind`: plan / update / handoff / standup / win / alert / question / answer. `data` jsonb for numbers (standup). Drives the portal report stream. |
 | `approvals` | Founder decisions made with Slack buttons. | `kind` + typed `payload` (see `ApprovalPayload` in types.ts), `status` incl. `edit_requested`, `slack_ts` of the button message (unique), `decided_by_slack_user`, `expires_at`. |
 | `sequences` | Mirror of the graph8 sequence the SDR built. | `steps` jsonb summary (channel/day/subject) for the approval card + portal; `g8_sequence_id`, `g8_list_id`, `g8_schedule_id`, `lead_count` vs `enrolled_count` (allowlisted subset), `stats`. |
@@ -68,6 +69,7 @@ Views (all `security_invoker`, so table RLS applies):
 - `portal_pipeline` — zero-filled count + deal amount per stage per workspace, in funnel order (`ord`).
 - `portal_needs_you` — pending approvals ∪ tasks blocked on `founder`/`connection`. "What needs me."
 - `portal_today` — one row per workspace: today's numbers in the workspace timezone (credits, agents working/waiting/paused, pending approvals, tasks open/done today, leads found/contacted, replies, meetings, deals, open deal value). The Office "today strip".
+- `portal_activity` — `run_steps` safe columns + `agent_id/agent_name/agent_role/agent_emoji/agent_color` + `task_id/task_number/task_title` (via `agent_runs`). The activity feed ("what agents are doing, step by step").
 
 Functions: `app_current_user_id()`, `is_workspace_member(ws)`, `is_workspace_visible(ws)`, `workspace_today(ws)`,
 `reset_daily_spend(ws)` (call from the standup cron; resumes budget-paused agents after rollover).
@@ -107,12 +109,18 @@ Functions: `app_current_user_id()`, `is_workspace_member(ws)`, `is_workspace_vis
 11. **RLS now vs later, same policies.** `is_workspace_visible(ws)` = `workspaces.is_demo OR member`. Demo: `is_demo=true`,
     anon key reads. Production: set `is_demo=false`, add `workspace_members` rows, portal uses Supabase Auth — no policy changes.
     Portal never writes (no insert/update policies); all writes go through the server with the service key.
-12. **Realtime** on `workspaces, agents, tasks, reports, approvals, sequences, leads, lead_events` (replica identity full).
+12. **Realtime** on `workspaces, agents, tasks, reports, approvals, sequences, leads, lead_events` (replica identity full) + `run_steps` (inserts only, default replica identity).
     Not on runs/credits (noisy); portal derives spend from `agents` updates. Realtime honours RLS, so private tables never stream.
 13. **Allowlist in the DB** (`contact_allowlist`) rather than only env: per-workspace, auditable, and the guard has one query.
     `leads.is_test_contact` is the denormalized flag set when a lead matches the allowlist.
 14. **Slack references are plain text ids** (`C…`, `U…`, `ts`), never FKs to a Slack mirror table. Unique index on
     `(workspace_id, slack_channel, slack_thread_ts)` gives O(1) thread → task lookup.
+15. **run_steps exposed by RLS + column grants, not a separate table** (migration 002). Realtime streams table rows, never
+    views, so a view alone cannot power a live feed. `run_steps` gets an anon/authenticated `portal_read` policy
+    (`is_workspace_visible`) and `GRANT SELECT (safe columns)` only; `args/result/error` are not granted, so `select *` or
+    `select=args` as anon fails with `42501 permission denied`, and Realtime (which checks the subscriber's RLS and column
+    privileges) does not deliver them either. `summary` is a generated column so the portal never needs `result`.
+    Portal reads `portal_activity` (security_invoker → same RLS + grants) and uses realtime INSERTs as a refetch signal.
 
 ## 4. How the server should use it (cheat sheet)
 
