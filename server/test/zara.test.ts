@@ -332,6 +332,13 @@ describe('handle_reply playbook', () => {
     expect(mg8.sendReplyGuarded).toHaveBeenCalledTimes(1);
   });
 
+  it('never pauses a graph8 sequence that is not ours (payload sequence id ignored)', async () => {
+    mllm.json.mockResolvedValue({ intent: 'not_now' });
+    h.state.fake.tables.leads[0].sequence_id = null;
+    h.state.fake.tables.leads[1].sequence_id = null;
+    await zara.run(makeCtx('handle_reply', replyInput({ sequence_id: 'foreign-777' })));
+    expect(h.calls.some((c) => c.includes('foreign-777'))).toBe(false);
+  });
   it('pause endpoint fails → falls back to pausing a single-account sequence', async () => {
     h.state.fake.tables.leads = h.state.fake.tables.leads.filter((l) => l.id !== 'L3');
     mg8.post.mockImplementation(async (path: string) => {

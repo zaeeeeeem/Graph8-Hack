@@ -5,7 +5,7 @@
  */
 import { g8 } from '../../lib/g8';
 import type { LeadRow, UUID } from '../../../../shared/types';
-import { accountLeads, addLeadEvent, leadsInSequence, sequencesByIds, updateLead } from './db';
+import { accountLeads, addLeadEvent, leadsInSequence, liveSequences, sequencesByIds, updateLead } from './db';
 
 export interface StopResult { paused: number; alreadyStopped: number; failed: number; sequencePaused: string[]; notes: string[] }
 
@@ -18,6 +18,10 @@ export async function stopAccount(p: {
   const res: StopResult = { paused: 0, alreadyStopped: 0, failed: 0, sequencePaused: [], notes: [] };
   const leads = await accountLeads(p.workspaceId, p.lead);
   const seqRows = await sequencesByIds([...new Set(leads.map((l) => l.sequence_id).filter(Boolean) as UUID[])]);
+  // Only ever pause on OUR sequences (rows in our DB for this workspace) — never a graph8 id taken from an event payload.
+  const ours = new Set((await liveSequences(p.workspaceId)).map((s) => String(s.g8_sequence_id)));
+  for (const s of seqRows) if (s.g8_sequence_id) ours.add(String(s.g8_sequence_id));
+  const extra = p.extraG8SequenceId && ours.has(String(p.extraG8SequenceId)) ? String(p.extraG8SequenceId) : null;
   const g8SeqOf = new Map(seqRows.map((s) => [s.id, s.g8_sequence_id]));
   const pausedSequences = new Set<string>();
 
@@ -26,7 +30,7 @@ export async function stopAccount(p: {
     const targets = new Set<string>();
     const own = l.sequence_id ? g8SeqOf.get(l.sequence_id) : null;
     if (own) targets.add(own);
-    if (l.id === p.lead.id && p.extraG8SequenceId) targets.add(p.extraG8SequenceId);
+    if (l.id === p.lead.id && extra) targets.add(extra);
     if (!targets.size && l.sequence_state !== 'enrolled' && l.sequence_state !== 'queued') continue;
     let ok = true;
     if (l.g8_contact_id) {
