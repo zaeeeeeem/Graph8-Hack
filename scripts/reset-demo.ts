@@ -5,12 +5,18 @@
  *                                                                demo personas) and wipe its work rows; prints its id
  *   tsx scripts/reset-demo.ts --workspace demo --clean [--yes]   wipe the fake seed of the demo workspace (keeps workspace
  *                                                                row + 5 agents, agents reset to idle)
+ *   tsx scripts/reset-demo.ts --workspace <id|test|demo> --clean --settings [--yes]
+ *                                                                also wipe workspaces.settings (graph8 ids: schedule, mailbox,
+ *                                                                pipeline, event type, voice agent, intent keywords, AI research,
+ *                                                                lists …), sales_brain, company_domain, allowlist graph8 ids and
+ *                                                                the webhook row → workspace back to onboarding. Use when the
+ *                                                                graph8 org changes (scripts/switch-org.ts calls this).
  *   tsx scripts/reset-demo.ts --workspace <id|test|demo> --stage [--yes]
  *                                                                keep leads/lead_contacts/settings; wipe tasks, runs, reports,
  *                                                                approvals, sequences, credit_events; workspace → onboarding
  * Run from repo root: pnpm -C server exec tsx ../scripts/reset-demo.ts …
  */
-import { DEMO_WORKSPACE_ID } from '../shared/types';
+import { DEFAULT_WORKSPACE_SETTINGS, DEMO_WORKSPACE_ID } from '../shared/types';
 import type { AgentRow, WorkspaceRow } from '../shared/types';
 import { must, store } from '../server/src/lib/store';
 
@@ -57,11 +63,39 @@ async function ensureTestWorkspace(yes: boolean): Promise<string | null> {
   return ws.id;
 }
 
+/**
+ * graph8-org-specific state lives in settings, sales_brain, allowlist graph8 contact ids and the webhook row; after an
+ * org switch every one of those ids points at the OLD org (a stale allowlist contact id could even match a stranger).
+ * Keeps: workspace row identity, Slack wiring, the 5 agents and their budgets, allowlist labels/emails/phones.
+ */
+export async function wipeOrgSettings(ws: string, opts: { g8OrgId?: string | null } = {}): Promise<void> {
+  must(await db.from('workspaces').update({
+    settings: DEFAULT_WORKSPACE_SETTINGS, sales_brain: {}, company_domain: null, status: 'onboarding', g8_schedule_id: null,
+    ...(opts.g8OrgId !== undefined ? { g8_org_id: opts.g8OrgId } : {}),
+  }).eq('id', ws), 'reset settings');
+  must(await db.from('contact_allowlist').update({ g8_contact_id: null }).eq('workspace_id', ws), 'clear allowlist graph8 ids');
+  must(await db.from('workspace_secrets').update({ g8_webhook_id: null, g8_webhook_secret: null, g8_api_key: null }).eq('workspace_id', ws), 'clear webhook row');
+}
+
+export async function wipeTables(ws: string, tables: string[]): Promise<void> {
+  // agents.current_task_id / tasks.* FKs are all ON DELETE SET NULL, so order only matters for readability.
+  await db.from('agents').update({ current_task_id: null }).eq('workspace_id', ws);
+  for (const t of tables) must(await db.from(t).delete().eq('workspace_id', ws), `delete ${t}`);
+  const today = new Date().toISOString().slice(0, 10);
+  must(await db.from('agents').update({ status: 'idle', pause_reason: null, current_task_id: null, spent_today_credits: 0, spend_day: today })
+    .eq('workspace_id', ws), 'reset agents');
+}
+
+export const CLEAN_TABLES = ['tasks', 'agent_runs', 'reports', 'approvals', 'sequences', 'leads', 'lead_events', 'credit_events'];
+export { count };
+
 async function main() {
   const which = arg('workspace');
   const clean = flag('clean');
   const stage = flag('stage');
+  const settings = flag('settings');
   const yes = flag('yes');
+  if (settings && !clean) { console.error('--settings only works with --clean'); process.exit(2); }
   if (!which || clean === stage) {
     console.error('usage: reset-demo --workspace test|demo|<uuid> (--clean | --stage) [--yes]');
     process.exit(2);
@@ -78,7 +112,7 @@ async function main() {
     ? ['tasks', 'agent_runs', 'reports', 'approvals', 'sequences', 'credit_events']
     : which === 'demo'
       ? ['tasks', 'agent_runs', 'reports', 'approvals', 'sequences', 'leads', 'lead_events', 'credit_events', 'inbound_events', 'contact_allowlist']
-      : ['tasks', 'agent_runs', 'reports', 'approvals', 'sequences', 'leads', 'lead_events', 'credit_events'];
+      : [...CLEAN_TABLES, ...(settings ? ['inbound_events'] : [])];
 
   console.log(`Workspace: ${row.name} (${row.id})${row.is_demo ? ' [DEMO]' : ''}`);
   console.log(`Mode: ${stage ? 'stage (keep leads, lead_contacts, settings)' : 'clean'}`);
@@ -86,15 +120,13 @@ async function main() {
   for (const t of wipe) console.log(`  ${t.padEnd(18)} ${await count(t, ws)} rows`);
   if (!stage) console.log(`  ${'lead_contacts'.padEnd(18)} (cascade with leads)`);
   console.log('Will reset: agents → idle, spent 0, no current task' + (stage ? '; workspace status → onboarding' : '; workspace spent 0, task counter 0'));
+  if (settings) console.log('Will reset: settings → defaults, sales_brain, company_domain, allowlist graph8 ids, webhook row; status → onboarding');
 
   if (!yes) { console.log('\nDry run. Re-run with --yes to do it.'); console.log(`WORKSPACE_ID=${ws}`); return; }
 
-  // agents.current_task_id / tasks.* FKs are all ON DELETE SET NULL, so order only matters for readability.
-  await db.from('agents').update({ current_task_id: null }).eq('workspace_id', ws);
-  for (const t of wipe) must(await db.from(t).delete().eq('workspace_id', ws), `delete ${t}`);
+  await wipeTables(ws, wipe);
+  if (settings) await wipeOrgSettings(ws);
   const today = new Date().toISOString().slice(0, 10);
-  must(await db.from('agents').update({ status: 'idle', pause_reason: null, current_task_id: null, spent_today_credits: 0, spend_day: today })
-    .eq('workspace_id', ws), 'reset agents');
   must(await db.from('workspaces').update(stage
     ? { status: 'onboarding', spent_today_credits: 0, spend_day: today }
     : { spent_today_credits: 0, spend_day: today, task_counter: 0 }).eq('id', ws), 'reset workspace');
@@ -102,4 +134,5 @@ async function main() {
   console.log(`WORKSPACE_ID=${ws}`);
 }
 
-main().catch((err) => { console.error(String(err?.message ?? err)); process.exit(1); });
+// Importable (switch-org.ts) without running.
+if (/reset-demo\.ts$/.test(process.argv[1] ?? '')) main().catch((err) => { console.error(String(err?.message ?? err)); process.exit(1); });
