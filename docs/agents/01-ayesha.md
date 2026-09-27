@@ -70,6 +70,8 @@ Every tool call is logged as a `run_steps` row under the current `agent_runs` ro
 | T11 | `update_settings` | `patch` (e.g. `{ daily_find: 20, target_persona: '…', geo: ['UK'] }`) | new settings | none | free | workspace settings (column TBD, see §8) |
 | T12 | `pause_team` / `resume_team` | `workspaceId, reason?` | `{ agents[] }` | none | free | `agents.status` `paused` / `idle` |
 | T13 | `setup_intent_tracking` | `workspaceId, persona` | `{ keyword groups }` | `g8_intent_add_keywords` (keywords + `jobs` / `job_changes` from the ICP) | free to create; ~1 credit per 10 events processed | workspace settings (see §8). Added from Bilal session (B10). |
+| T14 | `setup_ai_research` | `workspaceId, salesBrain` | `{ group_id }` | graph8 AI enrichment config (`web-research`, see `GET /enrichment/ai/configs`) | free to create; LLM credits when run | workspace settings (see §8). Added from Hira session (H7). |
+| T15 | `setup_voice_agent` | `workspaceId, salesBrain` | `{ voice_agent_name }` | graph8 voice agent creation (API to verify) on number +19802944116 | free to create; ~20 credits/min when calling | workspace settings (see §8). Added from Usman session (U8). Founder confirms first. |
 
 ## 5. Playbooks (fixed order, Gemini inside steps)
 
@@ -80,7 +82,7 @@ Every tool call is logged as a `run_steps` row under the current `agent_runs` ro
 3. **T1 read_company_brain.** No docs → T2 + "back in ~30 min" (D16) and stop; resume on webhook.
 4. Gemini: pick target persona/ICP + 1–2 alternatives + one-line why (D14).
 5. **T4 check_channels.** Missing channel → T7 `connect_account` (does not block, D10).
-6. **T3 setup_pipeline** (D12) + **T13 setup_intent_tracking** (Bilal B10).
+6. **T3 setup_pipeline** (D12) + **T13 setup_intent_tracking** (Bilal B10) + **T14 setup_ai_research** (Hira H7) + **T15 setup_voice_agent** (Usman U8).
 7. **T5 check_credits.**
 8. Post plan card (report kind `plan`): target, why, daily numbers, channels, team (org chart), budget, first standup time.
    Checklist message ends ✅.
