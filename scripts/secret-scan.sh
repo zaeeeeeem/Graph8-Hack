@@ -8,8 +8,10 @@ HITS=0
 say_hit() { echo "HIT: $1"; HITS=1; }
 
 echo "== secret-scan: pattern scan (tracked files) =="
+# Known false positives: pattern definitions (log redactor, this script) and the schema comment "xoxb-… (per Slack install)".
+IGNORE='const SECRET = /|PATTERNS=|xoxb-… \(per Slack install\)'
 PATTERNS='xoxb-|xapp-|xoxp-|AIza[0-9A-Za-z_-]{20,}|eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,}|sk_(live|test)_[A-Za-z0-9]{10,}|-----BEGIN [A-Z ]*PRIVATE KEY-----|g8_[A-Za-z0-9]{20,}'
-if git grep -InE "$PATTERNS" -- . 2>/dev/null | grep -v '^scripts/secret-scan.sh' > /tmp/secret-scan-tracked.$$; then
+if git grep -InE "$PATTERNS" -- . 2>/dev/null | grep -v '^scripts/secret-scan.sh' | grep -Ev "$IGNORE" > /tmp/secret-scan-tracked.$$; then
   while IFS=: read -r file line rest; do
     say_hit "$file:$line (pattern match)"
   done < /tmp/secret-scan-tracked.$$
@@ -17,7 +19,7 @@ fi
 rm -f /tmp/secret-scan-tracked.$$
 
 echo "== secret-scan: pattern scan (full git history) =="
-if git log -p --all 2>/dev/null | grep -EnA0 "$PATTERNS" > /tmp/secret-scan-hist.$$; then
+if git log -p --all 2>/dev/null | grep -EnA0 "$PATTERNS" | grep -Ev "$IGNORE" > /tmp/secret-scan-hist.$$; then
   COUNT=$(wc -l < /tmp/secret-scan-hist.$$ | tr -d ' ')
   if [ "$COUNT" -gt 0 ]; then
     say_hit "git history contains $COUNT line(s) matching secret patterns (run 'git log -p --all | grep -En \"$PATTERNS\"' locally to inspect — do not print here)"
