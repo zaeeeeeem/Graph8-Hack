@@ -11,7 +11,7 @@ import { listCard, type ListCardRow } from '../slack/cards/list';
 import { describeWidened, personaToPlan, toFilters, widen, type SearchFilter, type SearchPlan } from './bilal/filters';
 import { prospectKey, rank, score, toProspect, type Prospect } from './bilal/score';
 import {
-  asArray, eachLayer, errMsg, g8ContactUrl, normDomain, normLinkedin, openProgress, pool, realEmail, realPhone,
+  asArray, collectHandles, eachLayer, errMsg, g8ContactUrl, normDomain, normLinkedin, openProgress, pool, realEmail, realPhone,
   retryOnce, todayLabel, unwrap,
 } from './bilal/util';
 
@@ -68,17 +68,6 @@ export async function loadExisting(workspaceId: UUID): Promise<Existing> {
     for (const rec of sup) collectHandles(rec, suppressed);
   } catch { /* suppression list unavailable → rely on CRM/lead flags */ }
   return { keys, linkedins, suppressed };
-}
-
-/** Pull linkedin/email-ish strings out of an unknown record shape. */
-export function collectHandles(rec: unknown, into: Set<string>) {
-  if (!rec || typeof rec !== 'object') return;
-  for (const v of Object.values(rec as Record<string, unknown>)) {
-    if (typeof v === 'string') {
-      if (v.includes('linkedin.com/')) into.add(normLinkedin(v));
-      else if (realEmail(v)) into.add(realEmail(v)!);
-    } else if (v && typeof v === 'object') collectHandles(v, into);
-  }
 }
 
 export function isKnown(p: Prospect, ex: Existing): boolean {

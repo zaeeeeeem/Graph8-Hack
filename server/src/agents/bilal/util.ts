@@ -157,3 +157,14 @@ export async function eachLayer<R>(
   }));
   return { ok, failed };
 }
+
+/** Pull linkedin/email-ish strings out of an unknown record shape. */
+export function collectHandles(rec: unknown, into: Set<string>) {
+  if (!rec || typeof rec !== 'object') return;
+  for (const v of Object.values(rec as Record<string, unknown>)) {
+    if (typeof v === 'string') {
+      if (v.includes('linkedin.com/')) into.add(normLinkedin(v));
+      else if (realEmail(v)) into.add(realEmail(v)!);
+    } else if (v && typeof v === 'object') collectHandles(v, into);
+  }
+}
