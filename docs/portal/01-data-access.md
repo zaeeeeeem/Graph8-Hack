@@ -19,9 +19,13 @@ workspace with `is_demo = true` (the seeded one) from these tables/views only:
 | view `portal_pipeline` | zero-filled count + deal value per stage, funnel order |
 | view `portal_needs_you` | pending approvals ∪ tasks blocked on the founder |
 | view `portal_today` | one row: every number for the today strip |
+| view `portal_activity` | **activity feed**: every agent step (tool / llm / slack / note) with agent name/role/emoji/color and task number/title |
+| `run_steps` (safe columns only) | same steps, raw; only for the realtime subscription. Columns: `id, run_id, workspace_id, seq, kind, name, summary, ok, credits_used, duration_ms, created_at` |
 
 **Not readable** (you get `permission denied`, by design): `workspace_secrets`, `contact_allowlist`,
-`lead_contacts`, `run_steps`, `inbound_events`. Never query them. Inserts/updates are denied everywhere.
+`lead_contacts`, `inbound_events`, and the columns `run_steps.args / result / error`. Never query them.
+`run_steps?select=*` also fails (it includes private columns) — always name columns, or use `portal_activity`.
+Inserts/updates are denied everywhere.
 
 Types: copy `shared/types.ts` into the app (`lib/types.ts`). Row interfaces match column names 1:1.
 `numeric` columns (`deal_amount`, `deals_value`, `demo_time_scale`) arrive as **strings** — `Number()` them.
@@ -96,6 +100,17 @@ export const qAgentRuns = (agentId: string) => supabase.from('agent_runs')
   .select('id,task_id,trigger,trigger_ref,status,summary,error,model,input_tokens,output_tokens,tool_call_count,credits_used,started_at,finished_at')
   .eq('agent_id', agentId).order('started_at', { ascending: false }).limit(50);
 
+// Activity feed (Office side panel / agent detail / task drawer). Newest first.
+export const qActivity = (opts: { agentId?: string; taskId?: string; runId?: string; limit?: number } = {}) => {
+  let q = supabase.from('portal_activity')
+    .select('id,run_id,agent_id,agent_name,agent_role,agent_emoji,agent_color,task_id,task_number,task_title,seq,kind,name,summary,ok,credits_used,duration_ms,created_at')
+    .eq('workspace_id', ws).order('created_at', { ascending: false }).order('id', { ascending: false }).limit(opts.limit ?? 50);
+  if (opts.agentId) q = q.eq('agent_id', opts.agentId);
+  if (opts.taskId) q = q.eq('task_id', opts.taskId);
+  if (opts.runId) q = q.eq('run_id', opts.runId);
+  return q;
+};
+
 export const qCreditEvents = (agentId: string) => supabase.from('credit_events')
   .select('id,task_id,run_id,lead_id,source,action,credits,note,created_at')
   .eq('agent_id', agentId).order('created_at', { ascending: false }).limit(100);
@@ -114,10 +129,14 @@ Simpler and enough here: load `qAgents()` once, keep an `agentsById` map in cont
 - Reports in a task thread: `reports.task_id`. Report direction: `from_agent_id` → `to_agent_id` (null = to the founder).
 - Lead timeline: `lead_events.lead_id`. Lead ↔ sequence: `leads.sequence_id`.
 - Runs: `agent_runs.agent_id`, `agent_runs.task_id`.
+- Steps: `run_steps.run_id` → `agent_runs` → agent/task. `portal_activity` already carries `agent_*` and `task_*`, so no join needed.
+  Within a run, order by `seq`. `kind` chip: `tool` "graph8/tool", `llm` "thinking", `slack` "Slack", `note` "note". `ok=false` → error colour.
+  `summary` is PII-free, one line, may be null (show `name` then).
 
 ## 4. Realtime
 
-Tables published: `workspaces, agents, tasks, reports, approvals, sequences, leads, lead_events`.
+Tables published: `workspaces, agents, tasks, reports, approvals, sequences, leads, lead_events, run_steps`.
+(`run_steps` streams INSERTs only; payload carries only the safe columns above.)
 Views are not streamed; when an underlying table changes, **refetch the view**.
 
 One channel per workspace, one subscription per table, filter by `workspace_id`:
@@ -138,6 +157,7 @@ const TABLE_TO_QUERIES: Record<string, string[]> = {
   sequences:   ['sequences'],
   leads:       ['leads', 'pipeline', 'today'],
   lead_events: ['lead-events', 'leads', 'today'],
+  run_steps:   ['activity'],
 };
 
 export function useWorkspaceRealtime() {
@@ -166,6 +186,15 @@ Rules:
 - Realtime honours RLS: the anon key only receives rows of `is_demo` workspaces. Private tables never stream.
 - Show a tiny "live" dot bound to `channel.state === 'joined'`; grey when reconnecting. No toasts for
   changes already visible on screen (Paperclip rule). A small highlight/pulse on the changed card is enough.
+- Activity feed can append without refetch if you want it snappier (the payload is safe, agent name is not in it):
+  ```ts
+  channel.on('postgres_changes',
+    { event: 'INSERT', schema: 'public', table: 'run_steps', filter: `workspace_id=eq.${WORKSPACE_ID}` },
+    ({ new: s }) => {            // s: { id, run_id, workspace_id, seq, kind, name, summary, ok, credits_used, duration_ms, created_at }
+      pending.add('activity'); clearTimeout(timer); timer = setTimeout(flush, 250); // simplest: refetch portal_activity
+    });
+  ```
+  Refetching `qActivity()` is the recommended path (it brings agent/task labels). A run writes several steps in a burst; the debounce handles it.
 - Add per-row animation: key rows by `id`, animate on `updated_at` change (agents/tasks) or on new `id` (events/reports).
 
 ## 5. Link-out rules (the only "actions" in the portal)

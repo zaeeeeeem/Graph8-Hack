@@ -618,6 +618,29 @@ export interface PortalTodayRow {
   deals_value: string; // numeric -> string
 }
 
+/** View portal_activity (migration 002): run_steps safe columns + agent/task labels. Activity feed. */
+export interface PortalActivityRow {
+  id: number;
+  workspace_id: UUID;
+  run_id: UUID;
+  agent_id: UUID;
+  task_id: UUID | null;
+  agent_name: string;
+  agent_role: AgentRole;
+  agent_emoji: string;
+  agent_color: string;
+  task_number: number | null;
+  task_title: string | null;
+  seq: number;
+  kind: RunStepKind;
+  name: string;              // 'g8.search.contacts' | 'llm' | 'slack.post'
+  summary: string | null;    // PII-free, from run_steps.result->>'summary'
+  ok: boolean;
+  credits_used: number;
+  duration_ms: number | null;
+  created_at: ISODateTime;
+}
+
 // ---------------------------------------------------------------------------
 // Graph8 webhook envelope (what lands in inbound_events.payload for source='graph8')
 // ---------------------------------------------------------------------------
@@ -685,12 +708,13 @@ export interface Views {
   portal_pipeline: PortalPipelineRow;
   portal_needs_you: PortalNeedsYouRow;
   portal_today: PortalTodayRow;
+  portal_activity: PortalActivityRow;
 }
 export type TableName = keyof Tables;
 
 /** Tables the portal subscribes to via Supabase Realtime (see publication in SQL). */
 export const REALTIME_TABLES = [
-  'workspaces', 'agents', 'tasks', 'reports', 'approvals', 'sequences', 'leads', 'lead_events',
+  'workspaces', 'agents', 'tasks', 'reports', 'approvals', 'sequences', 'leads', 'lead_events', 'run_steps',
 ] as const satisfies readonly TableName[];
 
 /** Fixed demo ids from supabase/seed.sql. */

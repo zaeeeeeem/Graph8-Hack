@@ -21,6 +21,11 @@ never commit them). Anon key reads only the demo workspace and never sees emails
 no writes possible from your side; ask us to run the "make it move" SQL snippets when you want to test realtime.
 Workspace id: `a0000000-0000-4000-8000-000000000001`. Code goes in `office/` in this repo (branch `portal`).
 
+**New (activity feed):** agents' step-by-step work is now readable. Query view `portal_activity`
+(agent name/role/emoji/color, task number/title, `kind` tool/llm/slack/note, `name`, one-line PII-free `summary`, `ok`, `created_at`)
+and subscribe to `run_steps` INSERTs (already in the realtime hook table map) to refetch it. Exact query + snippet:
+`01-data-access.md` §2 `qActivity` and §4. Never `select *` on `run_steps` (private columns → permission denied).
+
 **Must-haves, in build order:** shell + realtime → Office (org-chart **canvas with pan/zoom/fit**, needs-you banner,
 today strip) → task drawer → pipeline → empty state. Then needs-you page, reports, agent detail if time.
 graph8 link paths in `lib/links.ts` are placeholders; we send verified patterns later.
