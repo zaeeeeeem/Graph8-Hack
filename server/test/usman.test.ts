@@ -126,9 +126,10 @@ describe('helpers', () => {
       { n: 2, day: 1, channel: 'linkedin', action: 'connection_request', mode: 'planned' as const, reason: 'LinkedIn not connected' },
       { n: 3, day: 5, channel: 'phone', action: 'call', mode: 'fire' as const },
     ];
-    expect(timelineText(steps)).toBe('✉️ D0 · in ⏸ D1 · 📞 D5');
+    expect(timelineText(steps)).toBe('✉️ D0 · 💼 ⏸ D1 · 📞 D5');
     const json = JSON.stringify(launchCardBlocks({ sequenceName: 'S', steps, testNames: ['Test Mate'], prospectCount: 2, secPerDay: 60 }));
-    expect(json).toContain('1 test lead enrolled');
+    expect(json).toContain('1 test lead: Test Mate');
+    expect(json).not.toMatch(/"in /);
     expect(json).toContain('1 day = 1 min');
     expect(json).not.toMatch(/@/);
   });
@@ -182,7 +183,7 @@ describe('build_sequence (Layer 0, zero layers)', () => {
     expect(steps.map((s: any) => `${s.channel}:${s.day}:${s.mode}`)).toEqual([
       'email:0:g8', 'linkedin:1:planned', 'sms:2:g8', 'email:3:g8', 'phone:5:fire', 'email:9:g8',
     ]);
-    expect(JSON.stringify(h.approvals[0].blocks)).toContain('in ⏸ D1');
+    expect(JSON.stringify(h.approvals[0].blocks)).toContain('⏸ Waiting: 💼 LinkedIn D1 (not connected)');
     expect(JSON.stringify(h.approvals[0].blocks)).toContain('broken: boom');
   });
 
@@ -444,21 +445,32 @@ describe('sendfix: direct compose for every email step', () => {
 });
 
 describe('launch card polish', () => {
-  it('one line per step: D0 subject, D3 follow-up first line, D9 breakup first line, ⏸/📞 with reason + layer preview', async () => {
+  it('one heading, clean live-step list, ONE waiting line for paused steps, 💼 not "in"', async () => {
     h.layersThrow = false;
     h.layers = [
-      { name: 'linkedin', stepPlan: async () => [{ day: 1, channel: 'linkedin', action: 'connection_request', state: 'planned', reason: 'waiting to connect LinkedIn in graph8', preview: 'Hi Lead, loved your post on UGC' }] },
+      { name: 'linkedin', stepPlan: async () => [
+        { day: 1, channel: 'linkedin', action: 'connection_request', state: 'planned', reason: 'waiting to connect LinkedIn in graph8', preview: 'Hi Lead, loved your post on UGC' },
+        { day: 6, channel: 'linkedin', action: 'message', state: 'planned', reason: 'waiting to connect LinkedIn in graph8' },
+      ] },
       { name: 'voice', stepPlan: async () => [{ day: 5, channel: 'phone', action: 'call', state: 'planned', reason: 'no AI-calling number yet' }] },
     ];
     await usman.run(ctx());
     const text = JSON.stringify(h.approvals[0].blocks);
-    const lines = (h.approvals[0].blocks[2].text.text as string).split('\n');
-    expect(lines).toHaveLength(5);
-    expect(lines[0]).toContain('*D0* Email — “Quick idea for”');
-    expect(lines[1]).toMatch(/in ⏸ \*D1\* LinkedIn connection request — “Hi Lead, loved your post on UGC” _\(⏸ waiting to connect/);
-    expect(lines[2]).toContain('*D3* Follow-up — “Bumping this.”');
-    expect(lines[3]).toMatch(/📞 ⏸ \*D5\* AI voice call _\(⏸ no AI-calling number yet\)_/);
-    expect(lines[4]).toContain('*D9* Breakup — “Last note from me.”');
+    const [first, ...rest] = h.approvals[0].blocks;
+    expect(h.approvals[0].title).toBe('🚀 Ready to launch · 1 test lead · 2 preview only');
+    expect(text).not.toContain('"header"'); // one heading only: the approval title
+    expect(text.match(/Graphi outreach/g)).toHaveLength(1); // name once, in the Sequence field
+    expect(first.fields.map((f: any) => f.text.split('\n')[0])).toEqual(['*Sequence*', '*Enrolled*', '*Preview only*', '*Timing*']);
+    const lines = (rest.find((b: any) => b.type === 'section' && /\*D0\*/.test(b.text?.text ?? '')).text.text as string).split('\n');
+    expect(lines).toHaveLength(3);
+    expect(lines[0]).toMatch(/^✉️ \*D0\*  Email — “Quick idea for/);
+    expect(lines[1]).toBe('✉️ *D3*  Follow-up — “Bumping this.”');
+    expect(lines[2]).toBe('✉️ *D9*  Breakup — “Last note from me.”');
+    const waiting = rest.find((b: any) => b.type === 'context' && /Waiting/.test(b.elements[0].text)).elements[0].text as string;
+    expect(waiting).toBe('⏸ Waiting: 💼 LinkedIn D1 + D6 (waiting to connect LinkedIn in graph8) · 📞 D5 AI call (no AI-calling number yet)');
+    expect(text.match(/⏸/g)).toHaveLength(1);
+    expect(text).not.toMatch(/"in |in ⏸/);
+    expect(text).toContain('First email · ');
     expect(text).not.toMatch(/@/);
   });
 

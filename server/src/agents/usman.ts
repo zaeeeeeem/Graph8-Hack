@@ -11,7 +11,7 @@ import { voiceLine } from '../lib/voice';
 import { store } from '../lib/store';
 import type { AgentBrain, Checklist, ChecklistItem, RunCtx } from '../contracts';
 import type { ApprovalRow, Channel, JsonObject, LeadRow, SequenceRow, UUID, WorkspaceSettings } from '../../../shared/types';
-import { launchCardBlocks, launchCardText, type LaunchCardInput } from '../slack/cards/launch';
+import { launchCardBlocks, launchCardText, launchCardTitle, type LaunchCardInput } from '../slack/cards/launch';
 import { previewLead, reviseSequenceCopy, SequenceCopy, writeSequenceCopy } from './usman/copy';
 import { archiveSequence, createSequence, patchEmailSteps, resolveMailbox, runSequence, scheduleId, setLeadContext } from './usman/g8ops';
 import { buildPlan, collectLayerSteps, emailStepData, firstLine, toG8Steps, toSummary, type PlanStep } from './usman/plan';
@@ -207,7 +207,7 @@ async function requestLaunch(ctx: RunCtx, payload: LaunchPayload, plan: LaunchCa
   copy: SequenceCopy, warnings: string[], c?: Checklist): Promise<ApprovalRow> {
   await mark(c, 'card', 'doing');
   const input = cardInput(payload, plan.map((s: any) => ({ ...s, emailIdx: s.emailIdx ?? s.email_idx })), leads, copy, warnings);
-  const title = `Launch ${payload.sequence_name}: ${payload.enroll_count} test lead(s), ${payload.lead_count - payload.enroll_count} preview only`;
+  const title = launchCardTitle(input);
   const approval = await ctx.requestApproval('launch_sequence', scrub(title), payload, launchCardBlocks(input), 'Launch');
   await store.db.from('sequences').update({ approval_id: approval.id, status: 'pending_approval' }).eq('id', payload.sequence_row_id);
   await mark(c, 'card', 'paused', 'waiting on founder in #sales-hq');
