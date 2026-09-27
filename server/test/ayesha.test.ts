@@ -79,6 +79,7 @@ import { slack } from '../src/lib/slack';
 import { store } from '../src/lib/store';
 import ayesha, { mirrorReport, pollReports } from '../src/agents/ayesha';
 import { CANT_YET, OFF_TOPIC, settingsPatch } from '../src/agents/ayesha/chat';
+import { companyName, whyLine } from '../src/agents/ayesha/onboarding';
 import { normDomain, scrubPii } from '../src/agents/ayesha/util';
 
 const G8_OK: Record<string, any> = {
@@ -89,6 +90,7 @@ const G8_OK: Record<string, any> = {
   ] },
   '/deals/pipelines': { data: [{ id: 'pipe-1', name: 'Sales Pipeline', is_default: true, stages: [{ id: 'st-0', name: 'Lead' }, { id: 'st-nm', name: 'New Meeting' }] }] },
   '/event-types': { data: [{ id: 1, title: 'Discovery call', slug: 'discovery-call' }] },
+  '/company-profile': { data: { profile: { fields: { company_name: { value: '8x Social, Inc.' } } } } },
   '/org/settings': { data: { org_id: 'org_x', org_name: 'Hackathon zaeemulhassanyt', metadata: { org_slug: 'hackathon-zaeemulhassanyt' } } },
   '/mailboxes': { data: [{ id: '1', email: 'owner@example.com', connection_status: 'active', is_archived: false, daily_limit: 40 }] },
   '/workflows/integrations/linkedin/senders': { senders: [], total_count: 0 },
@@ -154,7 +156,7 @@ describe('P1 onboarding', () => {
     expect(S.checklist.find(([k, s]) => k === 'channels' && s === 'warn')?.[2]).toMatch(/LinkedIn/);
     expect(S.checklist).toContainEqual(['extra.setup_voice_agent', 'done', 'Zara-Voice ready']);
     expect(S.checklist.find(([k, s]) => k === 'extra.setup_intent' && s === 'warn')).toBeTruthy();
-    expect(S.checklist).toContainEqual(['plan', 'done', 'press Start when ready']);
+    expect(S.checklist).toContainEqual(['plan', 'done', 'press Start']);
 
     // Connect card for LinkedIn + approvals row; plan card with [Start] value = task id
     const texts = S.posts.map((p) => p.msg.text);
@@ -163,6 +165,9 @@ describe('P1 onboarding', () => {
     const plan = S.posts.find((p) => /Sales plan/.test(p.msg.text))!;
     const start = plan.msg.blocks.flatMap((b: any) => b.elements ?? []).find((e: any) => e.action_id === 'act.plan_start');
     expect(start.value).toBe('task-1');
+    expect(plan.msg.text).toContain('Sales plan for 8x Social:');
+    expect(JSON.stringify(plan.msg.blocks)).toContain('*Why:* Most pain in docs');
+    expect(S.settings).toMatchObject({ plan_company: '8x Social', plan_why: 'Most pain in docs' });
     expect(S.writes.some((w) => w.table === 'workspaces' && w.values.status === 'active')).toBe(true);
     expect(c.report).toHaveBeenCalledWith('plan', expect.any(String), expect.any(String), expect.any(Object));
 
@@ -366,5 +371,26 @@ describe('P2 daily run + mirror', () => {
     expect(await pollReports('ws-1')).toBe(1);
     expect(await pollReports('ws-1')).toBe(0);
     expect(S.posts[0].msg.text).toContain('Meeting booked');
+  });
+  it('[Start] re-render keeps company name and why', async () => {
+    S.settings = { plan_company: '8x Social', plan_why: 'Growth leads own the UGC budget.', target_persona: 'Heads of Growth' };
+    await S.handlers['slack.action']({ actionId: 'act.plan_start', value: 'task-42', ctx: { workspaceId: 'ws-1', userId: 'U1', channel: 'C_HQ', messageTs: 'p-ts' } });
+    const card = vi.mocked(slack.update).mock.calls[0][2] as any;
+    expect(card.text).toContain('Sales plan for 8x Social');
+    expect(JSON.stringify(card.blocks)).toContain('Growth leads own the UGC budget.');
+  });
+});
+
+describe('plan copy helpers', () => {
+  it('whyLine: first sentence, never empty', () => {
+    expect(whyLine('They own the budget. Also more.', 'CFOs', 'SaaS')).toBe('They own the budget.');
+    expect(whyLine('', 'Heads of Growth', 'consumer apps.')).toBe('Heads of Growth at consumer apps feel the pain in your docs most and can say yes fastest.');
+    expect(whyLine(undefined, '', '')).toMatch(/^This buyer/);
+  });
+  it('companyName: graph8 profile, else non-truncated model name, else domain', async () => {
+    expect(await companyName('8x.social', '8x')).toBe('8x Social');
+    vi.mocked(g8.get).mockRejectedValue(new Error('404'));
+    expect(await companyName('8x.social', '8x')).toBe('8x.social');
+    expect(await companyName('acme.io', 'Acme Robotics')).toBe('Acme Robotics');
   });
 });
