@@ -5,6 +5,7 @@
 import { env } from '../../lib/env';
 import { g8 } from '../../lib/g8';
 import { slack } from '../../lib/slack';
+import { voiceLine } from '../../lib/voice';
 import { store } from '../../lib/store';
 import type { Checklist } from '../../contracts';
 import type { EventChannel, JsonObject, LeadEventType, LeadRow, SequenceRow, SequenceStats, UUID } from '../../../../shared/types';
@@ -155,9 +156,13 @@ export async function updateTracker(seq: SequenceRow, line: string): Promise<voi
   }
   await safe(async () => {
     if (!seq.task_id || env.SLACK_DISABLED) return;
-    const { data } = await store.db.from('tasks').select('slack_channel, slack_thread_ts').eq('id', seq.task_id).limit(1);
+    const { data } = await store.db.from('tasks').select('slack_channel, slack_thread_ts, assignee_agent_id').eq('id', seq.task_id).limit(1);
     const t = data?.[0];
     if (!t?.slack_channel || !t?.slack_thread_ts) return;
-    await slack.postAs('sdr', t.slack_channel, { text: `${line} · ${statsLine(seq.stats ?? {})}`, threadTs: t.slack_thread_ts });
+    // Send line in Usman's voice (3 s cap, template fallback); the stats tail stays verbatim.
+    const said = t.assignee_agent_id
+      ? await voiceLine('sdr', line, { workspaceId: seq.workspace_id, agentId: t.assignee_agent_id, taskId: seq.task_id }).catch(() => line)
+      : line;
+    await slack.postAs('sdr', t.slack_channel, { text: `${scrub(said)} · ${statsLine(seq.stats ?? {})}`, threadTs: t.slack_thread_ts });
   }, (e) => console.warn('[usman] tracker update failed:', errMsg(e)));
 }
