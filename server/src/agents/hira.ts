@@ -8,6 +8,7 @@ import type { Channel, DisqualifyReason, JsonObject, LeadContactRow, LeadRow, Le
 import { g8 } from '../lib/g8';
 import { store } from '../lib/store';
 import { researchCard, type ResearchCardRow } from '../slack/cards/research';
+import { wokenByChild } from './bilal';
 import { asArray, collectHandles, eachLayer, errMsg, g8ContactUrl, normLinkedin, openProgress, pool, scrubPii, type Progress } from './bilal/util';
 import { hiringSignal, lookupCompany, openJobs, type CompanyFacts } from './hira/company';
 import { emailUsable, pollJob, readContact, startEnrichment, timing, unlockContacts, verifyEmail, type JobState, type Verdict } from './hira/enrich';
@@ -303,6 +304,8 @@ export function continueLate(ctx: RunCtx, jobId: string, leadIds: UUID[], n: num
 // Playbook
 // ---------------------------------------------------------------------------
 async function run(ctx: RunCtx): Promise<string> {
+  const woke = wokenByChild(ctx); // woken after Usman's build_sequence finished — do not redo research
+  if (woke) return woke;
   let input = (ctx.task.input ?? {}) as HiraInput & JsonObject;
   const n = Number(ctx.settings.daily_research ?? 5);
   if (!input.lead_ids?.length) input = { ...input, ...(await pickFromLatestList(ctx, input.list_id ?? ctx.settings.last_run_list_id, n)) };
@@ -360,6 +363,7 @@ async function run(ctx: RunCtx): Promise<string> {
     researched: okReal.length, test: ok.length - okReal.length, emails, replaced: dqd.length, pending, list_id: listId != null ? String(listId) : null,
   });
   await pr.set('handoff', 'doing');
+  await store.db.from('tasks').update({ output: { ...(ctx.task.output ?? {}), handoff_summary: body, lead_ids: okReal.map((w) => w.lead.id) } }).eq('id', ctx.task.id);
   await ctx.delegate('sdr', 'build_sequence', `Build sequence for ${ok.length} researched leads${input.persona_label ? ` · ${input.persona_label}` : ''}`.slice(0, 120), {
     lead_ids: okReal.map((w) => w.lead.id), test_lead_ids: ok.filter((w) => w.lead.is_test_contact).map((w) => w.lead.id),
     pending_lead_ids: ok.filter((w) => w.pending).map((w) => w.lead.id), list_id: listId != null ? String(listId) : null,

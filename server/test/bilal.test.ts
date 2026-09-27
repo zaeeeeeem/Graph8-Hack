@@ -127,6 +127,7 @@ describe('bilal.run', () => {
     db = fakeDb({
       leads: [{ id: 'old', workspace_id: WS, full_name: 'First2 Last2', company_domain: 'co2.com', company_name: 'Co2', is_test_contact: false }],
       lead_contacts: [],
+      tasks: [{ id: 'task-1', output: {} }],
       contact_allowlist: [{ id: 'al1', workspace_id: WS, label: 'Zaeem (team)', email: 'zaeem@example.com', phone: '+923001234567', linkedin_url: null }],
     });
     m.store.db = db;
@@ -206,6 +207,24 @@ describe('bilal.run', () => {
     expect(card[2].threadTs).toBe('111.1');
     expect(JSON.stringify(card[2])).not.toMatch(PII);
     expect(m.store.patchSettings).toHaveBeenCalledWith(WS, { last_run_list_id: 77 });
+  });
+
+  it('when woken after Hira finishes (delegate semantics) it closes without searching again', async () => {
+    const c = ctx();
+    c.task.output = { handoff_summary: 'Found 10, 8 strong.', last_child: { number: 9, status: 'done', result_summary: '5 researched' } };
+    const r = await bilal.run(c);
+    expect(r).toContain('Found 10, 8 strong.');
+    expect(r).toContain('T-9 done');
+    expect(m.g8.post).not.toHaveBeenCalled();
+  });
+
+  it('reads Ayesha delegate input keys (target_persona, research_count)', async () => {
+    const c = ctx({ target_persona: 'CFOs at UK fintechs', count: 10, research_count: 3, geo: [] });
+    c.settings.target_persona = undefined;
+    await bilal.run(c);
+    expect(c.delegate.mock.calls[0][3].lead_ids).toHaveLength(3);
+    expect(c.delegate.mock.calls[0][3].backfill_lead_ids).toHaveLength(7);
+    expect(db.tables.tasks[0].output.handoff_summary).toContain('Found 10');
   });
 
   it('does not re-add TEST leads on later runs', async () => {

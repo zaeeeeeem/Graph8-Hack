@@ -158,14 +158,28 @@ function splitName(label: string): { first: string; last: string } {
 // ---------------------------------------------------------------------------
 // Playbook
 // ---------------------------------------------------------------------------
-export interface BilalInput { persona?: string; count?: number; geo?: string[]; icp?: string }
+export interface BilalInput { persona?: string; target_persona?: string | null; count?: number; research_count?: number; geo?: string[]; icp?: string; target_icp?: string | null }
+
+/**
+ * runtime: ctx.delegate() blocks this task on Hira's and re-runs us with task.output.last_child when she finishes.
+ * That wake must not redo the search — just close the task with the chain's outcome.
+ */
+export function wokenByChild(ctx: RunCtx): string | null {
+  const lc = (ctx.task.output as any)?.last_child;
+  if (!lc) return null;
+  const done = (ctx.task.output as any)?.handoff_summary as string | undefined;
+  return `${done ?? 'Prospects handed over'} · T-${lc.number} ${lc.status}${lc.result_summary ? `: ${String(lc.result_summary).slice(0, 160)}` : ''}`;
+}
 
 async function run(ctx: RunCtx): Promise<string> {
+  const woke = wokenByChild(ctx);
+  if (woke) return woke;
   const input = (ctx.task.input ?? {}) as BilalInput & JsonObject;
-  const persona = String(input.persona ?? ctx.settings.target_persona ?? ctx.settings.target_icp ?? '').trim();
+  const persona = String(input.persona ?? input.target_persona ?? ctx.settings.target_persona ?? input.target_icp ?? ctx.settings.target_icp ?? '').trim();
   if (!persona) throw new Error('No target persona set (settings.target_persona empty and no task input).');
   const want = Math.max(1, Math.min(50, Number(input.count ?? ctx.settings.daily_find ?? 10)));
-  const geo = (input.geo as string[] | undefined) ?? ctx.settings.geo ?? [];
+  const geo = (input.geo as string[] | undefined)?.length ? (input.geo as string[]) : ctx.settings.geo ?? [];
+  const handoffN = Math.max(1, Math.min(want, Number(input.research_count ?? ctx.settings.daily_research ?? HANDOFF_TOP)));
 
   const pr = await openProgress(ctx, `Finding ${want} prospects`, [
     { key: 'target', label: 'Reading target', state: 'doing' },
@@ -177,7 +191,7 @@ async function run(ctx: RunCtx): Promise<string> {
   ]);
 
   // 1. persona → filters
-  const { plan, via, note } = await personaToPlan(ctx, persona, { icp: input.icp ?? ctx.settings.target_icp, geo });
+  const { plan, via, note } = await personaToPlan(ctx, persona, { icp: input.icp ?? input.target_icp ?? ctx.settings.target_icp, geo });
   await ctx.step('llm', 'persona_to_filters', `Mapped persona via ${via}: ${plan.label}`, { plan: planJson(plan) });
   await pr.set('target', via === 'gemini' ? 'done' : 'warn', via === 'gemini' ? plan.label : `keyword fallback (${note ?? 'no LLM'})`);
 
@@ -274,7 +288,7 @@ async function run(ctx: RunCtx): Promise<string> {
       research: {
         rank: i + 1, reason: p.reason ?? '', confidence: p.confidence_score, breakdown: p.breakdown ?? {},
         seniority: p.seniority_level, industry: p.company_industry, size: p.company_employee_count,
-        find_task_id: ctx.task.id, handoff: i < HANDOFF_TOP ? 'hira' : 'backfill',
+        find_task_id: ctx.task.id, handoff: i < handoffN ? 'hira' : 'backfill',
       } as JsonObject,
     };
   });
@@ -325,7 +339,7 @@ async function run(ctx: RunCtx): Promise<string> {
   const strong = top.filter((p) => (p.fit_score ?? 0) >= STRONG_FIT).length;
   const widenedTxt = describeWidened(plan);
   const cardRows: ListCardRow[] = [
-    ...top.map((p, i) => ({ name: p.full_name, title: p.job_title, company: p.company_name, fit: p.fit_score ?? null, reason: p.reason ?? '', url: g8ContactUrl(rows[i].g8_contact_id), toHira: i < HANDOFF_TOP })),
+    ...top.map((p, i) => ({ name: p.full_name, title: p.job_title, company: p.company_name, fit: p.fit_score ?? null, reason: p.reason ?? '', url: g8ContactUrl(rows[i].g8_contact_id), toHira: i < handoffN })),
     ...tests.map((t) => ({ name: t.label, title: 'TEST', company: 'team', fit: null, reason: 'allowlisted teammate', url: g8ContactUrl(null), toHira: true, test: true })),
   ];
   const card = listCard({
@@ -334,13 +348,14 @@ async function run(ctx: RunCtx): Promise<string> {
   });
   await pr.post(card.text, card.blocks);
 
-  const handoffTop = leadIds.slice(0, HANDOFF_TOP);
-  const backfill = leadIds.slice(HANDOFF_TOP);
+  const handoffTop = leadIds.slice(0, handoffN);
+  const backfill = leadIds.slice(handoffN);
   const body = `Found ${top.length}, ${strong} strong${widenedTxt ? `; widened ${widenedTxt}` : ''}. Top ${handoffTop.length} → Hira${tests.length ? ` (+${tests.length} TEST teammates)` : ''}.`;
   await ctx.report('handoff', `Bilal → Hira: ${top.length} prospects`, body, {
     found: top.length, strong, widened: plan.widened, list_id: listId, persona_label: plan.label, test_leads: tests.length,
   });
   await pr.set('handoff', 'doing');
+  await store.db.from('tasks').update({ output: { ...(ctx.task.output ?? {}), handoff_summary: body, list_id: listId, lead_ids: leadIds, test_lead_ids: testLeadIds } }).eq('id', ctx.task.id);
   await ctx.delegate('researcher', 'research_leads', `Research top ${handoffTop.length} leads · ${plan.label}`.slice(0, 120), {
     lead_ids: handoffTop, backfill_lead_ids: backfill, test_lead_ids: testLeadIds, list_id: listId, persona, persona_label: plan.label,
   });
