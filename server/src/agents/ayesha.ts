@@ -19,6 +19,7 @@ import { runtime } from './runtime';
 import { G8_LINKS } from './ayesha/kit';
 import { runChat } from './ayesha/chat';
 import { runCrewChat } from './ayesha/crew';
+import { postAgentChat } from '../chat/agent-chat';
 import { analysisStatus, runOnboarding } from './ayesha/onboarding';
 import { runStandup } from './ayesha/standup';
 import { errMsg, normDomain, scrubPii } from './ayesha/util';
@@ -225,7 +226,11 @@ async function onMessage(e: BusEvents['slack.message']): Promise<void> {
   }
   const text = e.text.replace(/<@[A-Z0-9]+>/g, '').trim();
   if (e.addressed && e.addressed !== ROLE) {
-    await runCrewChat({ role: e.addressed, text, ctx: c, kind: e.kind });
+    // Named agent answers in its own voice with tools (chat/agent-chat.ts); classic classifier if that fails.
+    try { await postAgentChat({ role: e.addressed, text, slack: c }); } catch (err) {
+      rootLog.warn('tool chat failed, classic crew chat', { err: errMsg(err) });
+      await runCrewChat({ role: e.addressed, text, ctx: c, kind: e.kind });
+    }
     return;
   }
   await runtime.enqueue(c.workspaceId, ROLE, 'answer_question', `Chat: ${text.slice(0, 60)}`, {

@@ -364,8 +364,9 @@ async function run(ctx: RunCtx): Promise<string> {
     test: w.lead.is_test_contact, disqualified: w.dq ? { reason: w.dq.note, replacement: w.replacedBy } : undefined,
   }));
   const card = researchCard({ rows: cardRows, pendingNote: pending ? `${pending} contact lookups still running — leads update automatically` : undefined, warnings: env.warnings });
-  await pr.post(card.text, card.blocks);
-  await pr.post(await doneLine);
+  // One message per step: the voice line leads the card (template text only when the voice line failed).
+  const line = await doneLine;
+  await pr.post(line, [{ type: 'section', text: { type: 'mrkdwn', text: line } }, ...card.blocks]);
 
   const body = `${okReal.length} researched${ok.length > okReal.length ? ` (+${ok.length - okReal.length} TEST)` : ''}, ${emails} emails usable${dqd.length ? `, ${dqd.length} replaced` : ''}${pending ? `, ${pending} pending` : ''}.`;
   await ctx.report('handoff', `Hira → Usman: ${ok.length} leads researched`, body, {

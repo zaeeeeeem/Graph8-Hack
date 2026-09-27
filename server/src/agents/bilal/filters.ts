@@ -22,6 +22,72 @@ export interface SearchPlan {
   widened: string[];
   /** Filled by widen(): values accepted with reduced score. */
   loose: { titles: string[]; sizes: string[]; countries: string[] };
+  /** Company-first search (explicit "people at X"). */
+  domains?: string[];
+  /** Founder exclusions ("not agencies", "skip stripe.com"). */
+  excludeIndustries?: string[];
+  excludeDomains?: string[];
+}
+
+/** Founder constraints from chat (assign_task / search_prospects). They override the Gemini mapping and never drift to the default persona. */
+export interface ExplicitFilters { titles?: string[]; industries?: string[]; sizes?: string[]; countries?: string[]; domains?: string[]; exclude_industries?: string[]; exclude_domains?: string[] }
+
+const INDUSTRY_SYNONYMS: Array<[RegExp, string[]]> = [
+  [/\b(saas|software|tech(nology)?|b2b software|dev ?tools?)\b/i, ['Software Development', 'IT Services and IT Consulting']],
+  [/\b(fintech|financ\w*|payments?)\b/i, ['Financial Services']],
+  [/\bbank\w*/i, ['Banking']],
+  [/\b(health ?tech|healthcare|medical|hospital)\b/i, ['Hospitals and Health Care']],
+  [/\b(e-?commerce|ecom|retail)\b/i, ['Retail']],
+  [/\b(marketing|advertising|agency|agencies)\b/i, ['Advertising Services', 'Marketing Services']],
+  [/\b(edtech|education)\b/i, ['E-Learning Providers', 'Education']],
+  [/\b(real estate|proptech)\b/i, ['Real Estate']],
+  [/\b(logistics|shipping|freight)\b/i, ['Transportation, Logistics, Supply Chain and Storage']],
+  [/\b(consumer apps?|mobile apps?|gaming|games)\b/i, ['Computer Games', 'Mobile Gaming Apps']],
+  [/\b(energy|solar|utilit\w*)\b/i, ['Renewable Energy Power Generation', 'Utilities']],
+];
+
+/** Free-text industry ("software", "fintech") → verified graph8 vocab values. Unknown terms fall back to a vocab substring match. */
+export function matchIndustries(term: string): string[] {
+  const exact = pickIndustry(term);
+  if (exact) return [exact];
+  const out: string[] = [];
+  for (const [re, vals] of INDUSTRY_SYNONYMS) if (re.test(term)) out.push(...vals.filter((v) => pickIndustry(v)).map((v) => pickIndustry(v)!));
+  if (!out.length) {
+    const t = term.toLowerCase().trim();
+    if (t.length >= 4) out.push(...INDUSTRIES.filter((i) => i.toLowerCase().includes(t)).slice(0, 3));
+  }
+  return uniq(out);
+}
+
+/** Apply founder constraints on top of the mapped plan. Returns human notes for the checklist. */
+export function applyExplicit(plan: SearchPlan, x: ExplicitFilters | null | undefined): string[] {
+  const notes: string[] = [];
+  if (!x) return notes;
+  if (x.industries?.length) {
+    const inds = uniq(x.industries.flatMap(matchIndustries)).slice(0, 8);
+    if (inds.length) { plan.industries = inds; notes.push(`industry ${inds.join(', ')}`); }
+  }
+  if (x.titles?.length) {
+    plan.titles = uniq(x.titles).slice(0, 6);
+    plan.adjacentTitles = plan.adjacentTitles.filter((t) => !plan.titles.includes(t));
+    notes.push(`titles ${plan.titles.join(', ')}`);
+  }
+  if (x.sizes?.length) {
+    const sizes = uniq(x.sizes.map((s) => pickSize(s) ?? '')).filter(Boolean);
+    if (sizes.length) { plan.sizes = sizes; notes.push(`size ${sizes.join(', ')}`); }
+  }
+  if (x.countries?.length) {
+    plan.countries = uniq(x.countries).slice(0, 6);
+    plan.nearbyCountries = plan.nearbyCountries.filter((c) => !plan.countries.includes(c));
+    notes.push(`geo ${plan.countries.join(', ')}`);
+  }
+  if (x.domains?.length) { plan.domains = uniq(x.domains.map((d) => d.toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/\/.*$/, ''))).slice(0, 20); notes.push(`companies ${plan.domains.join(', ')}`); }
+  if (x.exclude_industries?.length) {
+    plan.excludeIndustries = uniq(x.exclude_industries.flatMap(matchIndustries)).slice(0, 8);
+    if (plan.excludeIndustries.length) { plan.industries = plan.industries.filter((i) => !plan.excludeIndustries!.includes(i)); notes.push(`excluding ${plan.excludeIndustries.join(', ')}`); }
+  }
+  if (x.exclude_domains?.length) { plan.excludeDomains = uniq(x.exclude_domains.map((d) => d.toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/\/.*$/, ''))).slice(0, 20); notes.push(`excluding ${plan.excludeDomains.join(', ')}`); }
+  return notes;
 }
 
 export interface SearchFilter { field: string; operator: 'any_of' | 'contains' | 'none_of' | 'between'; value: unknown[] }
@@ -116,6 +182,9 @@ export function toFilters(plan: SearchPlan): SearchFilter[] {
   if (sizes.length) f.push({ field: 'company_employee_count', operator: 'any_of', value: sizes });
   const countries = [...plan.countries, ...plan.loose.countries];
   if (countries.length) f.push({ field: 'country', operator: 'any_of', value: countries });
+  if (plan.domains?.length) f.push({ field: 'company_domain', operator: 'any_of', value: plan.domains });
+  if (plan.excludeIndustries?.length) f.push({ field: 'company_industry', operator: 'none_of', value: plan.excludeIndustries });
+  if (plan.excludeDomains?.length) f.push({ field: 'company_domain', operator: 'none_of', value: plan.excludeDomains });
   return f;
 }
 

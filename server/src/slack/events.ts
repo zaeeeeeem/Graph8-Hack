@@ -1,8 +1,9 @@
 /**
- * Founder messages -> bus 'slack.message': @mention, DM, reply in a thread the bot started, or a top-level message in
- * #sales-team / #sales-hq that addresses an agent by name ("Bilal, find 5 fintech CFOs", "hey Hira …").
- * Other plain channel chatter is ignored. Ignores bot messages and subtypes (edits, joins, …).
- * Adds a 👀 reaction as the instant ack (D7).
+ * Founder messages -> bus 'slack.message' (docs/CHAT-BANK.md "How the conversation works"):
+ *   - DM, @mention, any top-level message in #sales-hq → Ayesha unless it names an agent ("Bilal, …", "hey Hira …").
+ *   - #sales-team top-level → only when it names an agent.
+ *   - Replies in our threads → the agent named, else the last agent named in that thread, else Ayesha.
+ * Ignores bot messages and subtypes (edits, joins, …). Adds a 👀 reaction as the instant ack (D7).
  */
 import type { App } from '@slack/bolt';
 import type { AgentRole } from '../../../shared/types';
@@ -46,7 +47,6 @@ export async function registerEvents(app: App) {
   const auth = await app.client.auth.test();
   const botUserId = auth.user_id;
   const botId = (auth as any).bot_id as string | undefined;
-  const namedChannels = new Set([slackEnv('SLACK_CHANNEL_TEAM'), slackEnv('SLACK_CHANNEL_HQ')].filter(Boolean) as string[]);
 
   const react = (channel: string, ts: string) =>
     app.client.reactions.add({ channel, timestamp: ts, name: 'eyes' }).catch(() => undefined);
@@ -55,8 +55,9 @@ export async function registerEvents(app: App) {
     if ((event as any).bot_id || (event as any).subtype) return;
     await react(event.channel, event.ts);
     const text = stripMention(event.text ?? '', botUserId);
-    const addressed = addressedRole(text) ?? (event.thread_ts ? threadRoles.get(event.thread_ts) : undefined);
-    if (addressed && !event.thread_ts) rememberThreadRole(event.ts, addressed);
+    const named = addressedRole(text);
+    const addressed = named ?? (event.thread_ts ? threadRoles.get(event.thread_ts) : undefined);
+    if (named) rememberThreadRole(event.thread_ts ?? event.ts, named);
     bus.emit('slack.message', {
       kind: 'mention',
       text,
@@ -69,29 +70,53 @@ export async function registerEvents(app: App) {
     const m = message as any;
     if (m.subtype || m.bot_id || !m.user || m.user === botUserId || (botId && m.bot_id === botId)) return;
     const text: string = m.text ?? '';
-    const isDm = m.channel_type === 'im';
     // Channel messages that @mention us are handled by app_mention (avoid double events).
-    if (!isDm && botUserId && text.includes(`<@${botUserId}>`)) return;
-
-    const inThread = m.thread_ts && m.thread_ts !== m.ts;
-    const ourThread = inThread && (ourThreads.has(m.thread_ts) || threadRoles.has(m.thread_ts) || m.parent_user_id === botUserId);
-    const named = addressedRole(text);
-
-    let kind: 'dm' | 'mention' | 'thread_reply';
-    if (isDm) kind = 'dm';
-    else if (ourThread) kind = 'thread_reply';
-    else if (!inThread && named && namedChannels.has(m.channel)) kind = 'mention';
-    else return;
-
-    const addressed = named ?? (inThread ? threadRoles.get(m.thread_ts) : undefined);
-    if (kind === 'mention' && addressed) rememberThreadRole(m.ts, addressed);
-
+    if (m.channel_type !== 'im' && botUserId && text.includes(`<@${botUserId}>`)) return;
+    const r = routeMessage({
+      text, isDm: m.channel_type === 'im', channel: m.channel, ts: m.ts, threadTs: m.thread_ts, parentUserId: m.parent_user_id,
+      botUserId, hqChannel: slackEnv('SLACK_CHANNEL_HQ'), teamChannel: slackEnv('SLACK_CHANNEL_TEAM'),
+    });
+    if (!r) return;
     await react(m.channel, m.ts);
     bus.emit('slack.message', {
-      kind,
+      kind: r.kind,
       text: stripMention(text, botUserId),
-      addressed,
-      ctx: { workspaceId: workspaceId(), userId: m.user, channel: m.channel, threadTs: inThread ? m.thread_ts : kind === 'dm' ? undefined : m.ts, messageTs: m.ts },
+      addressed: r.addressed,
+      ctx: { workspaceId: workspaceId(), userId: m.user, channel: m.channel, threadTs: r.threadTs, messageTs: m.ts },
     });
   });
 }
+
+export interface RouteIn {
+  text: string; isDm: boolean; channel: string; ts: string; threadTs?: string; parentUserId?: string;
+  botUserId?: string; hqChannel?: string; teamChannel?: string;
+}
+export interface Route { kind: 'dm' | 'mention' | 'thread_reply'; addressed?: AgentRole; threadTs?: string }
+
+/**
+ * Pure routing decision (unit-tested). `addressed` undefined = Ayesha. Remembers the agent named in a thread so
+ * un-named follow-ups ("what do you mean?") stay with whoever the founder last talked to there.
+ */
+export function routeMessage(m: RouteIn): Route | null {
+  const inThread = !!m.threadTs && m.threadTs !== m.ts;
+  const named = addressedRole(m.text);
+  const inHq = !!m.hqChannel && m.channel === m.hqChannel;
+  const inTeam = !!m.teamChannel && m.channel === m.teamChannel;
+  const ourThread = inThread && (ourThreads.has(m.threadTs!) || threadRoles.has(m.threadTs!) || (!!m.botUserId && m.parentUserId === m.botUserId));
+
+  let kind: Route['kind'];
+  if (m.isDm) kind = inThread ? 'thread_reply' : 'dm';
+  else if (ourThread) kind = 'thread_reply';
+  else if (inThread && named && (inHq || inTeam)) kind = 'thread_reply';
+  else if (!inThread && (inHq || (named && inTeam))) kind = 'mention';
+  else return null;
+
+  const addressed = named ?? (inThread ? threadRoles.get(m.threadTs!) : undefined);
+  const threadKey = inThread ? m.threadTs! : m.ts;
+  if (named && !m.isDm) rememberThreadRole(threadKey, named);
+  else if (named && m.isDm && inThread) rememberThreadRole(threadKey, named);
+  return { kind, addressed, threadTs: inThread ? m.threadTs : kind === 'dm' ? undefined : m.ts };
+}
+
+/** Tests only. */
+export function _resetRouting() { ourThreads.clear(); threadRoles.clear(); }

@@ -4,7 +4,8 @@
  * not_built → "I can't do that yet" · off_topic → polite decline.
  */
 import { z } from 'zod';
-import type { RunCtx } from '../../contracts';
+import type { RunCtx, SlackCtx } from '../../contracts';
+import { postAgentChat } from '../../chat/agent-chat';
 import type { AgentRole, JsonObject, TaskKind, WorkspaceSettings } from '../../../../shared/types';
 import { llm } from '../../lib/llm';
 import { slack } from '../../lib/slack';
@@ -131,7 +132,30 @@ export async function delegateWork(ctx: RunCtx, work: keyof typeof DELEGATE, cou
   return `On it. ${d.who} has it: ${title} (T-${t.number}). Progress in #sales-team.`;
 }
 
+/**
+ * P3 chat: Gemini function-calling over the shared tool registry (chat/agent-chat.ts, docs/CHAT-BANK.md).
+ * If that loop fails outright, the classic classifier path below answers instead.
+ */
 export async function runChat(ctx: RunCtx): Promise<string> {
+  const input = ctx.task.input as unknown as ChatInput;
+  const text = String(input.text ?? '').trim();
+  if (text) {
+    const channel = input.channel ?? ctx.task.slack_channel ?? 'hq';
+    const threadTs = input.threadTs ?? ctx.task.slack_thread_ts ?? undefined;
+    const sc = (ctx.task.input as any)?._slack as SlackCtx | undefined;
+    try {
+      const r = await postAgentChat({ role: 'head_of_sales', text, run: ctx, slack: { workspaceId: ctx.workspaceId, userId: sc?.userId ?? '', channel, threadTs, messageTs: sc?.messageTs } });
+      const tools = r.calls.map((c) => c.name);
+      await ctx.report('answer', `Chat: ${tools.join(', ') || 'answer'}`, r.text, { tools });
+      return r.text;
+    } catch (e) {
+      ctx.log.warn('tool chat failed, classic path', { err: errMsg(e) });
+    }
+  }
+  return runClassicChat(ctx);
+}
+
+export async function runClassicChat(ctx: RunCtx): Promise<string> {
   const input = ctx.task.input as unknown as ChatInput;
   const text = String(input.text ?? '').trim();
   const channel = input.channel ?? ctx.task.slack_channel ?? 'hq';
