@@ -33,7 +33,10 @@ const h = vi.hoisted(() => {
   return { state, q };
 });
 
-vi.mock('../src/lib/env', () => ({ env: { WORKSPACE_ID: 'ws-1', SLACK_DISABLED: false, layersDisabled: [] } }));
+vi.mock('../src/lib/env', () => ({
+  env: { WORKSPACE_ID: 'ws-1', SLACK_DISABLED: false, layersDisabled: [], allowlist: [] },
+  linkedinNames: { send: () => [], connected: () => [] },
+}));
 vi.mock('../src/lib/log', () => {
   const l: any = { info() {}, warn() {}, error() {}, child: () => l };
   return { log: l, redact: (s: string) => s };

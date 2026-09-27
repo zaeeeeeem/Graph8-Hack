@@ -102,6 +102,14 @@ export function waitingLine(steps: LaunchCardStep[]): string | undefined {
   return `⏸ Waiting: ${parts.join(' · ')}`.slice(0, 1500);
 }
 
+/** Banner for live LinkedIn steps, e.g. "💼 LinkedIn D1/D6 live via graph8 (Moazam's seat, paced) — test contacts only". */
+export function linkedinLiveLine(steps: LaunchCardStep[]): string | undefined {
+  const live = steps.filter((s) => s.channel === 'linkedin' && s.mode !== 'planned');
+  if (!live.length) return undefined;
+  const why = live.find((s) => s.reason)?.reason ?? 'live via graph8 (paced)';
+  return `💼 LinkedIn ${live.map((s) => `D${s.day}`).join('/')} ${why}`.slice(0, 300);
+}
+
 function quote(text: string, max = 600): string {
   const t = text.length > max ? `${text.slice(0, max)}…` : text;
   return t.split('\n').map((l) => `> ${l}`).join('\n');
@@ -122,6 +130,8 @@ export function launchCardBlocks(i: LaunchCardInput): Block[] {
     { type: 'divider' },
     { type: 'section', text: { type: 'mrkdwn', text: stepLines(i.steps) || '_no live steps_' } },
   ];
+  const liLive = linkedinLiveLine(i.steps);
+  if (liLive) blocks.push({ type: 'context', elements: [{ type: 'mrkdwn', text: liLive }] });
   const waiting = waitingLine(i.steps);
   if (waiting) blocks.push({ type: 'context', elements: [{ type: 'mrkdwn', text: waiting }] });
   if (i.preview) {

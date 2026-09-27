@@ -25,7 +25,7 @@ export function linkedinConnectCard(opts: { touches?: number } = {}): { text: st
 }
 
 /** Card after the watcher sees a sender. Honest about graph8's API limit. */
-export function linkedinConnectedCard(opts: { touches: number; sequences: number }): { text: string; blocks: Block[] } {
+export function linkedinConnectedCard(opts: { touches: number; sequences: number; liveSends?: boolean }): { text: string; blocks: Block[] } {
   const text = `LinkedIn connected — ${opts.touches} touches now live`;
   const where = opts.sequences
     ? `Marked live on ${opts.sequences} sequence${opts.sequences === 1 ? '' : 's'}.`
@@ -34,7 +34,9 @@ export function linkedinConnectedCard(opts: { touches: number; sequences: number
     text,
     blocks: [
       section(`✅ *${text}*\n${where}`),
-      context("graph8's API doesn't accept LinkedIn steps yet, so we track them here and the per-lead drafts are ready to send from your LinkedIn sender in graph8."),
+      context(opts.liveSends
+        ? '💼 LinkedIn D1/D6 go out live via graph8 workflows (paced by the sender seat) for test contacts; other leads keep their drafts.'
+        : "graph8's API doesn't accept LinkedIn steps yet, so we track them here and the per-lead drafts are ready to send from your LinkedIn sender in graph8."),
     ],
   };
 }

@@ -1,9 +1,14 @@
 /**
- * Layer L3 — LinkedIn. Lives ONLY in our DB / Slack / portal (docs/verify/layers.md V-L1):
- * graph8 rejects HEYREACH/NETRION step types on POST /sequences, there is no UNIPILE, and the org has 0 senders.
+ * Layer L3 — LinkedIn. graph8 rejects HEYREACH/NETRION step types on POST /sequences (docs/verify/layers.md V-L1),
+ * so the steps are never g8Steps. W15: when live sends are on (lib/linkedin-send liveSendsOn: an allowlisted name in
+ * LINKEDIN_SEND_NAMES) and a sender seat is OK, D1/D6 are 'live' with a fire() the step scheduler calls per enrolled
+ * TEST lead; fire() queues the send through a graph8 workflow (Netrion nodes). docs/verify/linkedin-send.md.
  *
- *  - stepPlan: D1 connection request + D6 message, Gemini-drafted per lead (saved to leads.research.linkedin),
- *    always state 'planned' and never a g8Step.
+ *  - stepPlan: D1 connection request + D6 message, Gemini-drafted per lead (saved to leads.research.linkedin);
+ *    'planned' (drafts only) unless live sends are on.
+ *  - fire: only for a send-enabled allowlisted contact (URL from TEST_ALLOWLIST, never the lead's). Already connected
+ *    (LINKEDIN_CONNECTED_NAMES or a linkedin_connection_accepted event) → D1 sends the message, D6 is skipped;
+ *    otherwise D1 = connection request with note, D6 = message only once accepted. Everyone else: honest note, no send.
  *  - onboarding: checks the connection; not connected → { ok:false } + a connect_account approval with a Connect card
  *    (reuses Ayesha's pending one if she already posted it).
  *  - start(): on cron 'linkedin_watch' (60 s) polls /linkedin/connection + senders (LINKEDIN_FAKE_CONNECTED=1 simulates).
@@ -21,6 +26,7 @@ import { g8, unwrap } from '../lib/g8';
 import { llm } from '../lib/llm';
 import { log as rootLog } from '../lib/log';
 import { store } from '../lib/store';
+import { describeSend, liveSendsOn, resolveSender, sendLinkedin, sendTargetFor, type LiKind } from '../lib/linkedin-send';
 import { LINKEDIN_CONNECT_URL, linkedinConnectCard, linkedinConnectDoneBlocks, linkedinConnectedCard } from '../slack/cards/linkedin';
 
 const log = rootLog.child('layer:linkedin');
@@ -35,6 +41,9 @@ const MAX_DRAFT_LEADS = 25;
 export const REASON_WAITING = 'waiting to connect LinkedIn in graph8';
 export const REASON_API = "LinkedIn connected, but graph8's API doesn't accept LinkedIn steps yet — send the drafts from graph8";
 export const LIVE_NOTE = "live: graph8's API doesn't accept LinkedIn steps, so this is tracked here; drafts are per lead in research.linkedin";
+/** Reason on live D1/D6 steps; the Launch card shows it as the LinkedIn banner. */
+export const liveReason = (seat: string) => `live via graph8 (${seat.split(/\s+/)[0]}'s seat, paced) — test contacts only`;
+export const LIVE_SEND_NOTE = 'live via graph8 workflows (Netrion, paced) for allowlisted test contacts; other leads keep drafts';
 
 const errMsg = (e: unknown) => String((e as Error)?.message ?? e).slice(0, 200);
 
@@ -114,11 +123,19 @@ async function saveDrafts(leads: LeadRow[], drafts: Record<UUID, LinkedinDraft>)
   }).eq('id', l.id)));
 }
 
+/** Sender seat name when live sends are possible right now, else undefined. Never throws. */
+async function liveSeat(): Promise<string | undefined> {
+  if (!liveSendsOn()) return undefined;
+  try { return (await withTimeout(resolveSender(), 5_000, 'linkedin sender')).name; } catch { return undefined; }
+}
+
 export async function stepPlan(ctx: RunCtx, leads: LeadRow[]): Promise<PlannedStep[]> {
   const connected = Boolean(ctx.settings?.linkedin_connected);
-  const reason = connected ? REASON_API : REASON_WAITING;
+  const seat = await liveSeat();
+  const reason = seat ? liveReason(seat) : connected ? REASON_API : REASON_WAITING;
   let drafts: Record<UUID, LinkedinDraft> = {};
-  try {
+  // The step scheduler rebuilds fire() after a restart with an 8 s budget: skip drafting (fire() reads saved drafts).
+  if (ctx.runId !== 'scheduler') try {
     drafts = await draftAll(ctx, leads ?? []);
     void saveDrafts(leads ?? [], drafts).catch(() => undefined);
     await ctx.step('llm', 'linkedin_drafts', `drafted ${Object.keys(drafts).length} LinkedIn connect + message pair(s)`).catch(() => undefined);
@@ -128,10 +145,79 @@ export async function stepPlan(ctx: RunCtx, leads: LeadRow[]): Promise<PlannedSt
   const sample = leads?.[0] ? drafts[leads[0].id] : undefined;
   // g8Step is deliberately never set: graph8 rejects HEYREACH/NETRION (V-L1). `preview` is an extra for the card.
   const steps: Array<PlannedStep & { preview?: string }> = [
-    { day: CONNECT_DAY, channel: 'linkedin', action: 'connection_request', state: 'planned', reason, preview: sample?.connect },
-    { day: MESSAGE_DAY, channel: 'linkedin', action: 'message', state: 'planned', reason, preview: sample?.message },
+    { day: CONNECT_DAY, channel: 'linkedin', action: 'connection_request', state: seat ? 'live' : 'planned', reason, preview: sample?.connect },
+    { day: MESSAGE_DAY, channel: 'linkedin', action: 'message', state: seat ? 'live' : 'planned', reason, preview: sample?.message },
   ];
+  if (seat) { steps[0].fire = (c) => fireLinkedin(CONNECT_DAY, c); steps[1].fire = (c) => fireLinkedin(MESSAGE_DAY, c); }
   return steps;
+}
+
+// ------------------------------------------------------------------------------------------------ live send (fire)
+type FireCtx = Parameters<NonNullable<PlannedStep['fire']>>[0];
+
+async function liEvent(c: FireCtx, type: 'note' | 'linkedin_connection_sent' | 'linkedin_message_sent', summary: string, data: JsonObject) {
+  let agentId: UUID | null = null;
+  try { agentId = (await store.agentByRole(c.workspaceId, 'sdr')).id; } catch { /* optional */ }
+  const r = await store.db.from('lead_events').insert({
+    workspace_id: c.workspaceId, lead_id: c.lead.id, agent_id: agentId, type, channel: 'linkedin',
+    direction: type === 'note' ? 'internal' : 'outbound', summary, data: { sequence_id: String(c.sequenceId), layer: 'linkedin', ...data },
+  });
+  if (r?.error) log.warn('lead_events insert failed', { err: r.error.message });
+}
+
+async function hasLiEvent(leadId: UUID, type: string, sequenceId?: string): Promise<boolean> {
+  let q = store.db.from('lead_events').select('id').eq('lead_id', leadId).eq('type', type);
+  if (sequenceId) q = q.contains('data', { sequence_id: sequenceId });
+  const { data } = await q.limit(1);
+  return !!data?.length;
+}
+
+/** Mark the sequence's LinkedIn step for `day` queued with the latest queue_id (sequences.steps; no PII). */
+async function markStep(c: FireCtx, day: number, patch: JsonObject) {
+  const r = await store.db.from('sequences').select('id,steps').eq('workspace_id', c.workspaceId).eq('g8_sequence_id', String(c.sequenceId)).limit(1);
+  const seq = r.data?.[0];
+  if (!seq) return;
+  const steps = (seq.steps ?? []).map((s: any) => (s?.channel === 'linkedin' && s.day === day ? { ...s, ...patch } : s));
+  await store.db.from('sequences').update({ steps }).eq('id', seq.id);
+}
+
+/**
+ * D1 / D6 for one enrolled lead. Never throws; every outcome is a lead_events row. Sends only through
+ * lib/linkedin-send (guarded: allowlisted + LINKEDIN_SEND_NAMES), with the allowlist's own profile URL.
+ */
+export async function fireLinkedin(day: number, c: FireCtx): Promise<void> {
+  const seqId = String(c.sequenceId);
+  const who = (c.lead.full_name ?? 'lead').trim().split(/\s+/)[0];
+  try {
+    if (env.layersDisabled.includes('linkedin')) return;
+    const lc = await store.db.from('lead_contacts').select('linkedin_url,email').eq('lead_id', c.lead.id).maybeSingle();
+    const target = sendTargetFor({ linkedin: lc?.data?.linkedin_url, email: lc?.data?.email });
+    if (!target) {
+      await liEvent(c, 'note', `LinkedIn D${day} draft kept for ${who} — live LinkedIn sends are limited to send-enabled test contacts`, { state: 'planned', day });
+      return;
+    }
+    const d = ((c.lead.research as any)?.linkedin ?? {}) as Partial<LinkedinDraft>;
+    const draft = { ...templateDraft(c.lead), ...Object.fromEntries(Object.entries(d).filter(([, v]) => typeof v === 'string' && v.trim())) } as LinkedinDraft;
+    const connected = target.connected || await hasLiEvent(c.lead.id, 'linkedin_connection_accepted');
+    let kind: LiKind;
+    if (day === CONNECT_DAY) kind = connected ? 'message' : 'connect';
+    else if (!connected) {
+      await liEvent(c, 'note', `LinkedIn D${day} message for ${who} waits — connection request not accepted yet`, { state: 'waiting', day });
+      return;
+    } else if (await hasLiEvent(c.lead.id, 'linkedin_message_sent', seqId)) {
+      await liEvent(c, 'note', `LinkedIn D${day} skipped for ${who} — already messaged (connected, so D1 was the message)`, { state: 'skipped', day });
+      return;
+    } else kind = 'message';
+
+    const r = await sendLinkedin({ kind, url: target.url, text: kind === 'connect' ? draft.connect : draft.message, waitMs: 20_000 });
+    const data: JsonObject = { day, state: r.state, queue_id: r.queue_id ?? null, execution_id: r.execution_id ?? null, workflow_id: r.workflow_id ?? null, skip_reason: r.skip_reason ?? null };
+    const ok = r.state === 'queued' || r.state === 'running';
+    await liEvent(c, ok ? (kind === 'connect' ? 'linkedin_connection_sent' : 'linkedin_message_sent') : 'note', describeSend(r), data);
+    if (ok) await markStep(c, day, { state: 'queued', queue_id: r.queue_id ?? null, queued_at: new Date().toISOString(), sent_as: kind });
+  } catch (e) {
+    log.warn('linkedin fire failed', { err: errMsg(e) });
+    await liEvent(c, 'note', `⚠️ LinkedIn D${day} for ${who} not sent: ${errMsg(e)}`, { state: 'failed', day }).catch(() => undefined);
+  }
 }
 
 // ------------------------------------------------------------------------------------------------ onboarding
@@ -231,7 +317,7 @@ export async function onConnected(workspaceId: UUID, st: LinkedinStatus): Promis
       const isLi = s?.layer === 'linkedin' || s?.channel === 'linkedin';
       if (!isLi || s.mode === 'live') return s;
       n += 1;
-      return { ...s, mode: 'live', state: 'live', reason: LIVE_NOTE, live_at: now };
+      return { ...s, mode: 'live', state: 'live', reason: liveSendsOn() ? LIVE_SEND_NOTE : LIVE_NOTE, live_at: now };
     });
     if (!n) continue;
     const u = await store.db.from('sequences').update({ steps }).eq('id', seq.id);
@@ -240,12 +326,12 @@ export async function onConnected(workspaceId: UUID, st: LinkedinStatus): Promis
   }
 
   // 3. Report (portal) + #sales-hq post, as Usman (he owns the steps).
-  const card = linkedinConnectedCard({ touches: TOUCHES, sequences: seqs });
+  const card = linkedinConnectedCard({ touches: TOUCHES, sequences: seqs, liveSends: liveSendsOn() });
   try {
     const usman = await store.agentByRole(workspaceId, 'sdr');
     await store.db.from('reports').insert({
       workspace_id: workspaceId, from_agent_id: usman.id, kind: 'update', title: card.text,
-      body: `${flipped} LinkedIn step(s) on ${seqs} sequence(s) marked live. ${LIVE_NOTE}.`,
+      body: `${flipped} LinkedIn step(s) on ${seqs} sequence(s) marked live. ${liveSendsOn() ? LIVE_SEND_NOTE : LIVE_NOTE}.`,
       data: { layer: 'linkedin', senders: st.senders, sequences: seqs, steps: flipped, simulated: Boolean(st.fake) },
     });
   } catch (e) { log.warn('linkedin report failed', { err: errMsg(e) }); }
