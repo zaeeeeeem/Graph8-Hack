@@ -1,11 +1,11 @@
 import type { Block } from '../../contracts';
-import { G8_LINKS, actions, context, section } from '../../agents/ayesha/kit';
+import { G8_APP, G8_LINKS, actions, context, section } from '../../agents/ayesha/kit';
 
 export type ConnectAccount = 'linkedin' | 'mailbox' | 'phone' | 'calendar';
 const LABEL: Record<ConnectAccount, string> = { linkedin: 'LinkedIn', mailbox: 'an email mailbox', phone: 'a phone number', calendar: 'Google Calendar' };
 
 export function connectUrl(account: ConnectAccount): string {
-  return account === 'mailbox' ? G8_LINKS.mailboxes : account === 'calendar' ? G8_LINKS.appointments : G8_LINKS.settings;
+  return account === 'mailbox' ? G8_LINKS.mailboxes : account === 'calendar' ? G8_LINKS.appointments : account === 'linkedin' ? `${G8_APP}/profile?tab=connectors` : G8_LINKS.settings;
 }
 
 /** D10: ask + continue. Link button (no server round trip); a watcher flips it when the account appears. */
