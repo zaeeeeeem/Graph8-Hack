@@ -3,6 +3,7 @@
  * credits = ceil(total tokens / LLM_TOKENS_PER_CREDIT)) for the calling agent.
  * json(): JSON mode (responseMimeType application/json) → JSON.parse → zod; one repair round-trip on failure.
  */
+import { zodToJsonSchema } from 'zod-to-json-schema';
 import { GoogleGenAI } from '@google/genai';
 import type { ZodType } from 'zod';
 import type { Llm, LlmCallOpts } from '../contracts';
@@ -69,6 +70,13 @@ export const llm: Llm = {
   },
 
   async json<T>(prompt: string, schema: ZodType<T>, opts: LlmCallOpts): Promise<T> {
+    // Always show Gemini the exact shape so the first answer validates (avoids a paid repair round-trip).
+    try {
+      const shape = JSON.stringify(zodToJsonSchema(schema as any, { $refStrategy: 'none' }));
+      prompt = `${prompt}\n\nReturn ONLY JSON matching this JSON Schema:\n${shape.slice(0, 8000)}`;
+    } catch {
+      /* schema not convertible; rely on the prompt */
+    }
     const first = await call(prompt, opts, true);
     let problem: string;
     try {
