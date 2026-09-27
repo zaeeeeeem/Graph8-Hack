@@ -52,6 +52,17 @@ function bool(raw?: string): boolean {
   return /^(1|true|yes|on)$/i.test((raw ?? '').trim());
 }
 
+/**
+ * LinkedIn live sends (W15). Read lazily so tests/scripts can set them after import.
+ *  LINKEDIN_SEND_NAMES      — allowlisted test-contact names (TEST_ALLOWLIST field 1) we may actually send to; empty = none.
+ *  LINKEDIN_CONNECTED_NAMES — allowlisted names already 1st-degree connected with the sender seat (no API exposes this):
+ *                             connected → skip the connection request, DM on the first LinkedIn touch.
+ */
+export const linkedinNames = {
+  send: (): string[] => list(process.env.LINKEDIN_SEND_NAMES).map((s) => s.toLowerCase()),
+  connected: (): string[] => list(process.env.LINKEDIN_CONNECTED_NAMES).map((s) => s.toLowerCase()),
+};
+
 const REQUIRED = [
   'G8_API_KEY', 'GEMINI_API_KEY', 'SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY',
 ] as const;
